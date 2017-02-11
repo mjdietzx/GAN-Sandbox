@@ -59,33 +59,33 @@ def generator_network(input_tensor):
         y = layers.Activation('relu')(y)
         return y
 
-    x = layers.Dense(1024)(input_tensor)
-    x = add_common_layers(x)
-
     #
     # input dimensions to the first conv layer in the generator
     #
 
     height_dim = 7
     width_dim = 7
-    nb_feature_maps = 128
-
     assert img_height % height_dim == 0 and img_width % width_dim == 0, \
         'Generator network must be able to transform `x` into a tensor of shape (img_height, img_width, img_channels).'
 
-    x = layers.Dense(height_dim * width_dim * nb_feature_maps)(x)
+    # 7 * 7 * 16 == 784 input neurons
+    x = layers.Dense(height_dim * width_dim * 16)(input_tensor)
     x = add_common_layers(x)
 
-    x = layers.Reshape((height_dim, width_dim, nb_feature_maps))(x)
-
-    nb_feature_maps = 512 * 2
+    x = layers.Reshape((height_dim, width_dim, -1))(x)
 
     # generator will transform `x` into a tensor w/ the desired shape by up-sampling the spatial dimension of `x`
     # through a series of strided de-convolutions (each de-conv layer up-samples spatial dim of `x` by a factor of 2).
     while height_dim != img_height:
-        height_dim *= 2  # (14 => 28 => 56 => 112 == img_height)
+        # spatial dim: (14 => 28 => 56 => 112 == img_height == img_width)
+        height_dim *= 2
         width_dim *= 2
-        nb_feature_maps //= 2  # (512 => 256 => 128 => 64)
+
+        # nb_feature_maps: (512 => 256 => 128 => 64)
+        try:
+            nb_feature_maps //= 2
+        except NameError:
+            nb_feature_maps = 512
 
         x = layers.convolutional.Deconvolution2D(nb_feature_maps, *kernel_size,
                                                  output_shape=(None, height_dim, width_dim, nb_feature_maps),
@@ -93,24 +93,25 @@ def generator_network(input_tensor):
         x = add_common_layers(x)
 
     # number of feature maps => number of image channels
-    return layers.convolutional.Deconvolution2D(img_channels, *kernel_size, activation='tanh',
+    return layers.convolutional.Deconvolution2D(img_channels, 1, 1, activation='tanh',
                                                 border_mode='same',
                                                 output_shape=(None, img_height, img_width, img_channels))(x)
 
 
-def discriminator_network(input_image_tensor):
+def discriminator_network(x):
     def add_common_layers(y):
         y = layers.advanced_activations.LeakyReLU()(y)
         return y
 
     height_dim = 7
 
-    x = input_image_tensor
-    nb_feature_maps = 64 // 2
-
-    # down sample with strided convolutions until we reach the desired spatial dimension
+    # down sample with strided convolutions until we reach the desired spatial dimension (7 * 7 * nb_feature_maps)
     while x.get_shape()[1] != height_dim:
-        nb_feature_maps *= 2  # (64 => 128 => 256 => 512)
+        # nb_feature_maps: (64 => 128 => 256 => 512)
+        try:
+            nb_feature_maps *= 2
+        except NameError:
+            nb_feature_maps = 64
 
         x = layers.convolutional.Convolution2D(nb_feature_maps, *kernel_size, **conv_layer_keyword_args)(x)
         x = add_common_layers(x)
@@ -118,9 +119,6 @@ def discriminator_network(input_image_tensor):
     x = layers.Flatten()(x)
 
     x = layers.Dense(1024)(x)
-    x = add_common_layers(x)
-
-    x = layers.Dense(128)(x)
     x = add_common_layers(x)
 
     return layers.Dense(1, activation='sigmoid')(x)
@@ -162,6 +160,9 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     discriminator_model.compile(optimizer=sgd, loss='binary_crossentropy', metrics=['accuracy'])
     discriminator_model.trainable = False
     combined_model.compile(optimizer=sgd, loss='binary_crossentropy', metrics=['accuracy'])
+
+    print(generator_model.summary())
+    print(discriminator_model.summary())
 
     #
     # data generators
