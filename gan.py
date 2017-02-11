@@ -1,5 +1,5 @@
 """
-Standard GAN implemented on top of keras/tensorflow.
+Auxiliary Classifier GAN implemented on top of keras/tensorflow as described in https://arxiv.org/pdf/1610.09585.pdf.
 
 Note: Currently only supports Python 3.
 """
@@ -12,6 +12,7 @@ from keras import layers
 from keras import models
 from keras import optimizers
 from keras.preprocessing import image
+from keras.utils import np_utils
 import numpy as np
 
 from utils import plot_images
@@ -24,8 +25,12 @@ from utils import plot_images
 path = os.path.dirname(os.path.abspath(__file__))
 cache_dir = os.path.join(path, 'cache')
 
-# dimension of generator's input tensor
-rand_dim = 112
+#
+# generator input params
+#
+
+rand_dim = 112  # dimension of generator's input tensor
+nb_cat = 2  # number of possible categories in dataset (i.e. benign, malignant)
 
 #
 # image dimensions
@@ -119,9 +124,16 @@ def discriminator_network(x):
     x = layers.Flatten()(x)
 
     x = layers.Dense(16)(x)
+    shared = add_common_layers(x)
+
+    disc = layers.Dense(1, activation='sigmoid')(shared)
+
+    x = layers.Dense(16)(shared)
     x = add_common_layers(x)
 
-    return layers.Dense(1, activation='sigmoid')(x)
+    cat = layers.Dense(nb_cat, activation='softmax')(x)
+
+    return disc, cat
 
 
 def adversarial_training(data_dir, generator_model_path, discriminator_model_path):
@@ -157,9 +169,11 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     sgd = optimizers.SGD(lr=0.001)
 
     generator_model.compile(optimizer=sgd, loss='binary_crossentropy')
-    discriminator_model.compile(optimizer=sgd, loss='binary_crossentropy', metrics=['accuracy'])
+    discriminator_model.compile(optimizer=sgd, loss=['binary_crossentropy', 'categorical_crossentropy'],
+                                metrics=['accuracy'])
     discriminator_model.trainable = False
-    combined_model.compile(optimizer=sgd, loss='binary_crossentropy', metrics=['accuracy'])
+    combined_model.compile(optimizer=sgd, loss=['binary_crossentropy', 'categorical_crossentropy'],
+                           metrics=['accuracy'])
 
     print(generator_model.summary())
     print(discriminator_model.summary())
@@ -174,7 +188,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     flow_from_directory_params = {'target_size': (img_height, img_width),
                                   'color_mode': 'grayscale' if img_channels == 1 else 'rgb',
-                                  'class_mode': None,
+                                  'class_mode': 'categorical',
                                   'batch_size': batch_size}
 
     real_image_generator = data_generator.flow_from_directory(
@@ -183,14 +197,25 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     )
 
     def get_image_batch():
-        img_batch = real_image_generator.next()
+        img_batch, label_batch = real_image_generator.next()
 
         # keras generators may generate an incomplete batch for the last batch
         if len(img_batch) != batch_size:
-            img_batch = real_image_generator.next()
+            img_batch, label_batch = real_image_generator.next()
 
-        assert len(img_batch) == batch_size
-        return img_batch
+        assert img_batch.shape == (batch_size, img_height, img_width, img_channels) and \
+            label_batch.shape == (batch_size, nb_cat), (img_batch.shape, label_batch.shape)
+
+        return img_batch, label_batch
+
+    def get_generator_input():
+        labels = np_utils.to_categorical(np.random.randint(0, nb_cat, size=batch_size), nb_cat)
+        gen_input = np.concatenate((labels, np.random.normal(size=(batch_size, rand_dim - nb_cat))), axis=1)
+
+        assert gen_input.shape == (batch_size, rand_dim) and labels.shape == (batch_size, nb_cat), \
+            (gen_input.shape, labels.shape)
+
+        return gen_input, labels
 
     # the target labels for the binary cross-entropy loss layer are 0 for every yj (real) and 1 for every xi (generated)
     y_real = np.array([0] * batch_size)
@@ -210,24 +235,28 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
         # train the discriminator
         for _ in range(k_d):
-            generator_input = np.random.normal(size=(batch_size, rand_dim))
+            generator_input, generated_label_batch = get_generator_input()
+
             # sample a mini-batch of real images
-            real_image_batch = get_image_batch()
+            real_image_batch, real_label_batch = get_image_batch()
 
             # generate a batch of images with the current generator
             generated_image_batch = generator_model.predict(generator_input)
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
-            disc_loss_real = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss_real)
-            disc_loss_generated = np.add(discriminator_model.train_on_batch(generated_image_batch, y_generated),
+            disc_loss_real = np.add(discriminator_model.train_on_batch(real_image_batch, [y_real, real_label_batch]),
+                                    disc_loss_real)
+            disc_loss_generated = np.add(discriminator_model.train_on_batch(generated_image_batch,
+                                                                            [y_generated, generated_label_batch]),
                                          disc_loss_generated)
 
         # train the generator
         for _ in range(k_g * 2):
-            generator_input = np.random.normal(size=(batch_size, rand_dim))
+            generator_input, generated_label_batch = get_generator_input()
 
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            combined_loss = np.add(combined_model.train_on_batch(generator_input, y_real), combined_loss)
+            combined_loss = np.add(combined_model.train_on_batch(generator_input, [y_real, generated_label_batch]),
+                                   combined_loss)
 
         if not i % log_interval and i != 0:
             # plot batch of generated images w/ current generator
