@@ -24,8 +24,11 @@ from utils import plot_images
 path = os.path.dirname(os.path.abspath(__file__))
 cache_dir = os.path.join(path, 'cache')
 
-# dimension of generator's input tensor
-rand_dim = 112
+#
+# generator input params
+#
+
+rand_dim = 112  # dimension of generator's input tensor
 
 #
 # image dimensions
@@ -154,12 +157,12 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     # compile models
     #
 
-    sgd = optimizers.SGD(lr=0.001)
+    adam = optimizers.Adam(lr=0.0002, beta_1=0.5, beta_2=0.999)  # as described in appendix A of DeepMind's AC-GAN paper
 
-    generator_model.compile(optimizer=sgd, loss='binary_crossentropy')
-    discriminator_model.compile(optimizer=sgd, loss='binary_crossentropy', metrics=['accuracy'])
+    generator_model.compile(optimizer=adam, loss='binary_crossentropy')
+    discriminator_model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
     discriminator_model.trainable = False
-    combined_model.compile(optimizer=sgd, loss='binary_crossentropy', metrics=['accuracy'])
+    combined_model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
 
     print(generator_model.summary())
     print(discriminator_model.summary())
