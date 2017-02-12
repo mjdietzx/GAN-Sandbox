@@ -192,7 +192,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         if len(img_batch) != batch_size:
             img_batch = real_image_generator.next()
 
-        assert len(img_batch) == batch_size
+        assert img_batch.shape == (batch_size, img_height, img_width, img_channels), img_batch.shape
         return img_batch
 
     # the target labels for the binary cross-entropy loss layer are 0 for every yj (real) and 1 for every xi (generated)
