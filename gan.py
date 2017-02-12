@@ -243,7 +243,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         if len(img_batch) != batch_size:
             img_batch = real_image_generator.next()
 
-        assert len(img_batch) == batch_size
+        assert img_batch.shape == (batch_size, img_height, img_width, img_channels), img_batch.shape
         return img_batch
 
     def get_generator_input():
