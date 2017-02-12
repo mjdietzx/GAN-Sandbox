@@ -13,6 +13,7 @@ from keras import models
 from keras import optimizers
 from keras.preprocessing import image
 import numpy as np
+import tensorflow as tf
 
 from utils import plot_images
 
@@ -29,6 +30,9 @@ cache_dir = os.path.join(path, 'cache')
 #
 
 rand_dim = 112  # dimension of generator's input tensor
+nb_cat = 10  # number of possible categories for the `categorical_latent_dim` latent variables
+categorical_latent_dim = 2  # number of categorical latent vars
+continuous_latent_dim = 2  # number of continuous latent vars
 
 #
 # image dimensions
@@ -122,9 +126,20 @@ def discriminator_network(x):
     x = layers.Flatten()(x)
 
     x = layers.Dense(16)(x)
+    shared = add_common_layers(x)
+
+    disc = layers.Dense(1, activation='sigmoid')(shared)
+
+    x = layers.Dense(16)(shared)
     x = add_common_layers(x)
 
-    return layers.Dense(1, activation='sigmoid')(x)
+    # the `softmax` activation will be applied in the custom loss
+    cat = layers.Dense(categorical_latent_dim * nb_cat)(x)
+
+    # use `tanh` non-linearity since cont latent variables are in range [-1, 1]
+    cont = layers.Dense(continuous_latent_dim, activation='tanh')(x)
+
+    return disc, cat, cont
 
 
 def adversarial_training(data_dir, generator_model_path, discriminator_model_path):
@@ -151,7 +166,37 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     generator_model = models.Model(input=generator_input_tensor, output=generated_image_tensor, name='generator')
     discriminator_model = models.Model(input=generated_or_real_image_tensor, output=discriminator_output,
                                        name='discriminator')
+    # real images don't have categorical or continuous latent variables so this loss should be ignored
+    discriminator_model_real = models.Model(input=generated_or_real_image_tensor, output=discriminator_output[0],
+                                            name='discriminator_real')
     combined_model = models.Model(input=generator_input_tensor, output=combined_output, name='combined')
+
+    #
+    # custom loss functions
+    #
+
+    def categorical_latent_loss(y_true, y_pred):
+        delta = 1.0  # tune `delta` so `categorical_latent_loss` is on the same scale as other GAN objectives
+
+        # y_true.shape == (batch_size, categorical_latent_dim) =>
+        y_true = tf.reshape(y_true, (-1, ))
+        y_true = tf.cast(y_true, tf.int32)
+
+        # y_pred.shape == (batch_size, categorical_latent_dim * nb_cat) =>
+        y_pred = tf.reshape(y_pred, (-1, nb_cat))
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y_true, logits=y_pred)
+
+        return tf.multiply(delta, tf.reduce_mean(loss))
+
+    # TODO: not sure if this is correct
+    def continuous_latent_loss(y_true, y_pred):
+        delta = 1.0
+
+        y_true = tf.reshape(y_true, (-1, ))
+        y_pred = tf.reshape(y_pred, (-1, ))
+        loss = tf.square(y_pred - y_true)
+
+        return tf.multiply(delta, tf.reduce_mean(loss))
 
     #
     # compile models
@@ -160,9 +205,15 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     adam = optimizers.Adam(lr=0.0002, beta_1=0.5, beta_2=0.999)  # as described in appendix A of DeepMind's AC-GAN paper
 
     generator_model.compile(optimizer=adam, loss='binary_crossentropy')
-    discriminator_model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
+    discriminator_model_real.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
+    discriminator_model.compile(optimizer=adam,
+                                loss=['binary_crossentropy', categorical_latent_loss, continuous_latent_loss],
+                                metrics=['accuracy'])
+
     discriminator_model.trainable = False
-    combined_model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
+    combined_model.compile(optimizer=adam,
+                           loss=['binary_crossentropy', categorical_latent_loss, continuous_latent_loss],
+                           metrics=['accuracy'])
 
     print(generator_model.summary())
     print(discriminator_model.summary())
@@ -195,12 +246,22 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         assert len(img_batch) == batch_size
         return img_batch
 
+    def get_generator_input():
+        categorical_latent_var = np.random.randint(0, nb_cat, size=(batch_size, categorical_latent_dim))
+        continuous_latent_var = np.random.uniform(-1, 1, size=(batch_size, continuous_latent_dim))
+
+        gen_input = np.concatenate((categorical_latent_var, continuous_latent_var, np.random.normal(
+            size=(batch_size, rand_dim - categorical_latent_dim - continuous_latent_dim))), axis=1)
+
+        assert gen_input.shape == (batch_size, rand_dim), gen_input.shape
+        return gen_input, categorical_latent_var, continuous_latent_var
+
     # the target labels for the binary cross-entropy loss layer are 0 for every yj (real) and 1 for every xi (generated)
     y_real = np.array([0] * batch_size)
     y_generated = np.array([1] * batch_size)
 
     combined_loss = np.zeros(shape=len(combined_model.metrics_names))
-    disc_loss_real = np.zeros(shape=len(discriminator_model.metrics_names))
+    disc_loss_real = np.zeros(shape=len(discriminator_model_real.metrics_names))
     disc_loss_generated = np.zeros(shape=len(discriminator_model.metrics_names))
 
     if generator_model_path:
@@ -213,7 +274,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
         # train the discriminator
         for _ in range(k_d):
-            generator_input = np.random.normal(size=(batch_size, rand_dim))
+            generator_input, cat, cont = get_generator_input()
             # sample a mini-batch of real images
             real_image_batch = get_image_batch()
 
@@ -221,23 +282,27 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             generated_image_batch = generator_model.predict(generator_input)
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
-            disc_loss_real = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss_real)
-            disc_loss_generated = np.add(discriminator_model.train_on_batch(generated_image_batch, y_generated),
-                                         disc_loss_generated)
+            disc_loss_real = np.add(discriminator_model_real.train_on_batch(real_image_batch, y_real), disc_loss_real)
+            disc_loss_generated = np.add(
+                discriminator_model.train_on_batch(generated_image_batch, [y_generated, cat, cont]),
+                disc_loss_generated)
 
         # train the generator
         for _ in range(k_g * 2):
-            generator_input = np.random.normal(size=(batch_size, rand_dim))
+            generator_input, cat, cont = get_generator_input()
 
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            combined_loss = np.add(combined_model.train_on_batch(generator_input, y_real), combined_loss)
+            combined_loss = np.add(combined_model.train_on_batch(generator_input,
+                                                                 [y_real, cat, cont]), combined_loss)
 
         if not i % log_interval and i != 0:
             # plot batch of generated images w/ current generator
             figure_name = 'generated_image_batch_step_{}.png'.format(i)
             print('Saving batch of generated images at adversarial step: {}.'.format(i))
 
-            plot_images.plot_batch(generator_model.predict(np.random.normal(size=(batch_size, rand_dim))),
+            # TODO: show how plotted images relate to cat and cont latent vars
+            generator_input, _, _ = get_generator_input()
+            plot_images.plot_batch(generator_model.predict(generator_input),
                                    get_image_batch(),
                                    os.path.join(cache_dir, figure_name))
 
@@ -247,7 +312,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             print('Discriminator model loss generated: {}.'.format(disc_loss_generated / (log_interval * k_d * 2)))
 
             combined_loss = np.zeros(shape=len(combined_model.metrics_names))
-            disc_loss_real = np.zeros(shape=len(discriminator_model.metrics_names))
+            disc_loss_real = np.zeros(shape=len(discriminator_model_real.metrics_names))
             disc_loss_generated = np.zeros(shape=len(discriminator_model.metrics_names))
 
             # save model checkpoints
