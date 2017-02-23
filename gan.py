@@ -14,7 +14,7 @@ from keras import optimizers
 from keras.preprocessing import image
 import numpy as np
 
-from utils import plot_images
+from dlutils import plot_image_batch_w_labels
 
 
 #
@@ -237,9 +237,12 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             figure_name = 'generated_image_batch_step_{}.png'.format(i)
             print('Saving batch of generated images at adversarial step: {}.'.format(i))
 
-            plot_images.plot_batch(generator_model.predict(np.random.normal(size=(batch_size, rand_dim))),
-                                   get_image_batch(),
-                                   os.path.join(cache_dir, figure_name))
+            generated_image_batch = generator_model.predict(np.random.normal(size=(batch_size, rand_dim)))
+            real_image_batch = get_image_batch()
+
+            plot_image_batch_w_labels.plot_batch(np.concatenate((generated_image_batch, real_image_batch)),
+                                                 os.path.join(cache_dir, figure_name),
+                                                 label_batch=['generated'] * batch_size + ['real'] * batch_size)
 
             # log loss summary
             print('Generator model loss: {}.'.format(combined_loss / (log_interval * k_g * 2)))
