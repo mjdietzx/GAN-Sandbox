@@ -7,7 +7,7 @@ The `master` branch serves as a simple, clean and robust starting point for GAN 
 ## Branches
 `master`: Standard GAN.  
 `ac-gan`: Auxiliary classifier GAN as described in: [Conditional image synthesis with auxiliary classifier GANs](https://arxiv.org/pdf/1610.09585.pdf).  
-`info-gan`: Information maximizing GAN as described in: [InfoGAN: Interpretable Representation Learning by Information Maximizing Generative Adversarial Nets](https://arxiv.org/pdf/1606.03657v1.pdf).
+`info-gan`: Information maximizing GAN as described in: [InfoGAN: Interpretable Representation Learning by Information Maximizing Generative Adversarial Nets](https://arxiv.org/pdf/1606.03657v1.pdf).  
 `cGAN`: As described in: [Image-to-Image Translation with Conditional Adversarial Networks](https://arxiv.org/pdf/1611.07004v1.pdf).
 
 Note: `ACGAN` is a more limited form of `InfoGAN`. `InfoGAN` can take an arbitrary number of categorical and continuous latent variables as input to the generator. ACGAN is an InfoGAN in the case where the generator takes one categorical latent variable as input corresponding to the label of the image to be generated.
