@@ -95,37 +95,37 @@ def generator_network(input_tensor):
     n_7 = add_common_layers(n_7, dropout=False)
 
     # decoder: CD512-CD1024-CD1024-C1024-C1024-C512-C256-C128
-    x = layers.Deconvolution2D(512, *kernel_size, **conv_layer_keyword_args, output_shape=(None, 2, 2, 512))(n_7)
+    x = layers.Deconvolution2D(512, *kernel_size, output_shape=(None, 2, 2, 512), **conv_layer_keyword_args)(n_7)
     x = add_common_layers(x)
     x = layers.merge([n_6, x], mode='concat', concat_axis=3)
 
-    x = layers.Deconvolution2D(512, *kernel_size, **conv_layer_keyword_args, output_shape=(None, 4, 4, 512))(x)
+    x = layers.Deconvolution2D(512, *kernel_size, output_shape=(None, 4, 4, 512), **conv_layer_keyword_args)(x)
     x = add_common_layers(x)
     x = layers.merge([n_5, x], mode='concat', concat_axis=3)
 
-    x = layers.Deconvolution2D(512, *kernel_size, **conv_layer_keyword_args, output_shape=(None, 8, 8, 512))(x)
+    x = layers.Deconvolution2D(512, *kernel_size, output_shape=(None, 8, 8, 512), **conv_layer_keyword_args)(x)
     x = add_common_layers(x)
     x = layers.merge([n_4, x], mode='concat', concat_axis=3)
 
-    x = layers.Deconvolution2D(512, *kernel_size, **conv_layer_keyword_args, output_shape=(None, 16, 16, 512))(x)
+    x = layers.Deconvolution2D(512, *kernel_size, output_shape=(None, 16, 16, 512), **conv_layer_keyword_args)(x)
     x = add_common_layers(x, dropout=False)
     x = layers.merge([n_3, x], mode='concat', concat_axis=3)
 
-    x = layers.Deconvolution2D(256, *kernel_size, **conv_layer_keyword_args, output_shape=(None, 32, 32, 256))(x)
+    x = layers.Deconvolution2D(256, *kernel_size, output_shape=(None, 32, 32, 256), **conv_layer_keyword_args)(x)
     x = add_common_layers(x, dropout=False)
     x = layers.merge([n_2, x], mode='concat', concat_axis=3)
 
-    x = layers.Deconvolution2D(128, *kernel_size, **conv_layer_keyword_args, output_shape=(None, 64, 64, 128))(x)
+    x = layers.Deconvolution2D(128, *kernel_size, output_shape=(None, 64, 64, 128), **conv_layer_keyword_args)(x)
     x = add_common_layers(x, dropout=False)
     x = layers.merge([n_1, x], mode='concat', concat_axis=3)
 
-    x = layers.Deconvolution2D(64, *kernel_size, **conv_layer_keyword_args, output_shape=(None, 128, 128, 64))(x)
+    x = layers.Deconvolution2D(64, *kernel_size, output_shape=(None, 128, 128, 64), **conv_layer_keyword_args)(x)
     x = add_common_layers(x, dropout=False)
     x = layers.merge([n_0, x], mode='concat', concat_axis=3)
 
     # number of feature maps => number of image channels
-    return layers.Deconvolution2D(img_channels, *kernel_size, **conv_layer_keyword_args, activation='tanh',
-                                  output_shape=(None, img_height, img_width, img_channels))(x)
+    return layers.Deconvolution2D(img_channels, *kernel_size, output_shape=(None, img_height, img_width, img_channels),
+                                  **conv_layer_keyword_args, activation='tanh')(x)
 
 
 # NOTE: `x` is two input images concatenated: (edges, image) => (img_height, img_width, img_channels * 2)
