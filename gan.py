@@ -125,7 +125,7 @@ def generator_network(input_tensor):
 
     # number of feature maps => number of image channels
     return layers.Deconvolution2D(img_channels, *kernel_size, output_shape=(None, img_height, img_width, img_channels),
-                                  **conv_layer_keyword_args, activation='tanh')(x)
+                                  activation='tanh', **conv_layer_keyword_args)(x)
 
 
 # NOTE: `x` is two input images concatenated: (edges, image) => (img_height, img_width, img_channels * 2)
