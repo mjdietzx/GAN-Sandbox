@@ -16,7 +16,7 @@ from keras.preprocessing import image
 import numpy as np
 import tensorflow as tf
 
-from utils import plot_images
+from dlutils import plot_image_batch_w_labels
 
 
 #
@@ -311,12 +311,10 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             print('Saving batch of generated images at adversarial step: {}.'.format(i))
 
             image_batch, edge_image_batch = get_image_pair_batch()
-
-            g = generator_model.predict(edge_image_batch)
-            print(g.shape)
-            plot_images.plot_batch(g,
-                                   image_batch,
-                                   os.path.join(cache_dir, figure_name))
+            generated_image_batch = generator_model.predict(edge_image_batch)
+            plot_image_batch_w_labels.plot_batch(np.concatenate((generated_image_batch, image_batch)),
+                                                 os.path.join(cache_dir, figure_name),
+                                                 label_batch=['generated'] * batch_size + ['real'] * batch_size)
 
             # log loss summary
             print('Generator model loss: {}.'.format(combined_loss / (log_interval * k_g * 2)))
