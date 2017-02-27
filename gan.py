@@ -142,8 +142,6 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     generated_or_real_image_tensor = layers.Input(shape=(img_height, img_width, img_channels))
     discriminator_output = discriminator_network(generated_or_real_image_tensor)
 
-    combined_output = discriminator_network(generator_network(generator_input_tensor))
-
     #
     # define models
     #
@@ -151,6 +149,8 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     generator_model = models.Model(input=generator_input_tensor, output=generated_image_tensor, name='generator')
     discriminator_model = models.Model(input=generated_or_real_image_tensor, output=discriminator_output,
                                        name='discriminator')
+
+    combined_output = discriminator_model(generator_model(generator_input_tensor))
     combined_model = models.Model(input=generator_input_tensor, output=combined_output, name='combined')
 
     #
