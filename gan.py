@@ -97,31 +97,31 @@ def generator_network(input_tensor):
     # decoder: CD512-CD1024-CD1024-C1024-C1024-C512-C256-C128
     x = layers.Deconvolution2D(512, *kernel_size, output_shape=(None, 2, 2, 512), **conv_layer_keyword_args)(n_7)
     x = add_common_layers(x)
-    x = layers.merge([n_6, x], mode='concat', concat_axis=3)
+    x = layers.merge([n_6, x], mode='concat', concat_axis=-1)
 
     x = layers.Deconvolution2D(512, *kernel_size, output_shape=(None, 4, 4, 512), **conv_layer_keyword_args)(x)
     x = add_common_layers(x)
-    x = layers.merge([n_5, x], mode='concat', concat_axis=3)
+    x = layers.merge([n_5, x], mode='concat', concat_axis=-1)
 
     x = layers.Deconvolution2D(512, *kernel_size, output_shape=(None, 8, 8, 512), **conv_layer_keyword_args)(x)
     x = add_common_layers(x)
-    x = layers.merge([n_4, x], mode='concat', concat_axis=3)
+    x = layers.merge([n_4, x], mode='concat', concat_axis=-1)
 
     x = layers.Deconvolution2D(512, *kernel_size, output_shape=(None, 16, 16, 512), **conv_layer_keyword_args)(x)
     x = add_common_layers(x, dropout=False)
-    x = layers.merge([n_3, x], mode='concat', concat_axis=3)
+    x = layers.merge([n_3, x], mode='concat', concat_axis=-1)
 
     x = layers.Deconvolution2D(256, *kernel_size, output_shape=(None, 32, 32, 256), **conv_layer_keyword_args)(x)
     x = add_common_layers(x, dropout=False)
-    x = layers.merge([n_2, x], mode='concat', concat_axis=3)
+    x = layers.merge([n_2, x], mode='concat', concat_axis=-1)
 
     x = layers.Deconvolution2D(128, *kernel_size, output_shape=(None, 64, 64, 128), **conv_layer_keyword_args)(x)
     x = add_common_layers(x, dropout=False)
-    x = layers.merge([n_1, x], mode='concat', concat_axis=3)
+    x = layers.merge([n_1, x], mode='concat', concat_axis=-1)
 
     x = layers.Deconvolution2D(64, *kernel_size, output_shape=(None, 128, 128, 64), **conv_layer_keyword_args)(x)
     x = add_common_layers(x, dropout=False)
-    x = layers.merge([n_0, x], mode='concat', concat_axis=3)
+    x = layers.merge([n_0, x], mode='concat', concat_axis=-1)
 
     # number of feature maps => number of image channels
     return layers.Deconvolution2D(img_channels, *kernel_size, output_shape=(None, img_height, img_width, img_channels),
@@ -156,27 +156,20 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     # define model input and output tensors
     #
 
-    # G takes observed image x as input (noise is provided only in the form of dropout - applied at both train/test)
-    generator_input_tensor = layers.Input(shape=(img_height, img_width, img_channels))
-    generated_image_tensor = generator_network(generator_input_tensor)
+    # G takes observed image `x` as input (noise is provided only in the form of dropout - applied at both train/test)
+    x = layers.Input(shape=(img_height, img_width, img_channels))
+    y = generator_network(x)
 
     # unlike an unconditional GAN, both the generator and discriminator observe an input image
-    generated_or_real_image_pair_tensor = layers.Input(shape=(img_height, img_width, img_channels * 2))
-    discriminator_output = discriminator_network(generated_or_real_image_pair_tensor)
-
-    # combined must output the generated image along w/ the disc's classification for the generator's self-reg loss
-    combined_output = discriminator_network(layers.merge(
-        (generator_input_tensor, generator_network(generator_input_tensor)), mode='concat', concat_axis=3))
+    x_y = layers.Input(shape=(img_height, img_width, img_channels * 2))
+    z = discriminator_network(x_y)
 
     #
     # define models
     #
 
-    generator_model = models.Model(input=generator_input_tensor, output=generated_image_tensor, name='generator')
-    discriminator_model = models.Model(input=generated_or_real_image_pair_tensor, output=discriminator_output,
-                                       name='discriminator')
-    combined_model = models.Model(input=generator_input_tensor, output=[generated_image_tensor, combined_output],
-                                  name='combined')
+    generator_model = models.Model(input=x, output=y, name='generator')
+    discriminator_model = models.Model(input=x_y, output=z, name='discriminator')
 
     discriminator_model_output_shape = discriminator_model.output_shape
 
@@ -205,11 +198,17 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     generator_model.compile(optimizer=adam, loss='binary_crossentropy')
     discriminator_model.compile(optimizer=adam, loss=local_adversarial_loss)
     discriminator_model.trainable = False
+
+    # combined must output the generated image along w/ the disc's classification for the generator's self-reg loss
+    combined_output = discriminator_model(layers.merge((x, generator_model(x)), mode='concat', concat_axis=-1))
+    combined_model = models.Model(input=x, output=[generator_model(x), combined_output], name='combined')
+
     # the generator is tasked to not only fool the discriminator but also to be near the ground truth output (L1)
     combined_model.compile(optimizer=adam, loss=[self_regularization_loss, local_adversarial_loss])
 
     print(generator_model.summary())
     print(discriminator_model.summary())
+    print(combined_model.summary())
 
     #
     # data generators
@@ -219,6 +218,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         preprocessing_function=applications.xception.preprocess_input,
         dim_ordering='tf')
 
+    # FIXME: edge-image pairs must be correct, shuffle=False but not sure if this is doing it
     flow_from_directory_params = {'target_size': (img_height, img_width),
                                   'color_mode': 'grayscale' if img_channels == 1 else 'rgb',
                                   'class_mode': None,
@@ -283,7 +283,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         for _ in range(k_d):
             # sample a mini-batch of real image pairs
             image_batch, edge_image_batch = get_image_pair_batch()
-            disc_input_real = np.concatenate((edge_image_batch, image_batch), axis=3)
+            disc_input_real = np.concatenate((edge_image_batch, image_batch), axis=-1)
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
             disc_loss_real = np.add(discriminator_model.train_on_batch(disc_input_real, y_real), disc_loss_real)
@@ -293,7 +293,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
             # generate a batch of images with the current generator
             generated_image_batch = generator_model.predict(edge_image_batch)
-            disc_input_generated = np.concatenate((edge_image_batch, generated_image_batch), axis=3)
+            disc_input_generated = np.concatenate((edge_image_batch, generated_image_batch), axis=-1)
 
             disc_loss_generated = np.add(discriminator_model.train_on_batch(disc_input_generated, y_generated),
                                          disc_loss_generated)
