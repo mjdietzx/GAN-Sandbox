@@ -8,6 +8,9 @@ import os
 import sys
 
 import keras
+assert int(keras.__version__[0]) == 2, 'Requires Keras v2.x.x. This corresponds to branch `keras-2`. ' \
+                                       'Run `$ sudo pip3 install -U git+https://github.com/fchollet/keras.git@keras-2`.'
+
 from keras import applications
 from keras import constraints
 from keras import layers
@@ -20,9 +23,6 @@ import tensorflow as tf
 
 from dlutils import plot_image_batch_w_labels
 
-
-assert int(keras.__version__[0]) == 2, 'Requires Keras v2.x.x. This corresponds to branch `keras-2`. ' \
-                                       'Run `$ sudo pip3 install -U git+https://github.com/fchollet/keras.git@keras-2`.'
 
 # NOTE: the names `critic` and `discriminator` are used interchangeably
 # since the disc is no longer explicitly classifying input as real/generated (not required to output a probability)
