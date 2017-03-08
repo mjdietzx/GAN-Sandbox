@@ -135,13 +135,13 @@ def discriminator_network(x):
     x = add_common_layers(x, batchnorm=False, dropout=False)
 
     x = layers.Convolution2D(128, *kernel_size, **conv_layer_keyword_args)(x)
-    x = add_common_layers(x, dropout=False)
+    x = add_common_layers(x, batchnorm=False, dropout=False)
 
     x = layers.Convolution2D(256, *kernel_size, **conv_layer_keyword_args)(x)
-    x = add_common_layers(x, dropout=False)
+    x = add_common_layers(x, batchnorm=False, dropout=False)
 
     x = layers.Convolution2D(512, *kernel_size, **conv_layer_keyword_args)(x)
-    x = add_common_layers(x, dropout=False)
+    x = add_common_layers(x, batchnorm=False, dropout=False)
 
     # NOTE: using softmax (applied in loss) instead of sigmoid as described in paper...
     return layers.Convolution2D(2, 1, 1, border_mode='same')(x)
