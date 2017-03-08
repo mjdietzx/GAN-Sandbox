@@ -12,7 +12,6 @@ assert int(keras.__version__[0]) == 2, 'Requires Keras v2.x.x. This corresponds 
                                        'Run `$ sudo pip3 install -U git+https://github.com/fchollet/keras.git@keras-2`.'
 
 from keras import applications
-from keras import constraints
 from keras import layers
 from keras import models
 from keras import initializers
@@ -39,14 +38,14 @@ cache_dir = os.path.join(path, 'cache')
 # generator input params
 #
 
-rand_dim = 112  # dimension of generator's input tensor (gaussian noise)
+rand_dim = 112  # dimension of the generator's input tensor (gaussian noise)
 
 #
 # image dimensions
 #
 
-img_height = 112
-img_width = 112
+img_height = 28
+img_width = 28
 img_channels = 3
 
 #
@@ -59,8 +58,8 @@ k_d = 5  # number of critic network updates per adversarial training step
 k_g = 1  # number of generator network updates per adversarial training step
 log_interval = 5  # interval (in steps) at which to log loss summaries and save plots of image samples to disc
 learning_rate = 0.00005
-clipping_parameter = 0.01
-critic_pre_train_steps = 100  # number of steps to pre-train the critic before starting adversarial training
+clipping_parameter = 0.25
+critic_pre_train_steps = 10  # number of steps to pre-train the critic before starting adversarial training
 
 
 #
@@ -70,31 +69,21 @@ critic_pre_train_steps = 100  # number of steps to pre-train the critic before s
 def get_weight_initializer():
     return initializers.TruncatedNormal(mean=0.0, stddev=clipping_parameter / 2.0)
 
-
-def get_weight_constraints(axis):
-    return constraints.MinMaxNorm(min_value=-clipping_parameter, max_value=clipping_parameter, rate=1.0, axis=axis)
-
 kernel_size = (3, 3)
 conv_layer_keyword_args = {
     'padding': 'same',
     'strides': 2,
     'kernel_initializer': get_weight_initializer(),
-    'kernel_constraint': get_weight_constraints([0, 1, 2, 3])
-}
-conv_layer_keyword_args_gen = {'padding': 'same', 'strides': 2}
-dense_layer_keyword_args = {
-    'kernel_initializer': get_weight_initializer(),
-    'kernel_constraint': get_weight_constraints([0, 1])
 }
 
 
-def generator_network(input_tensor):
+def generator_network(x):
     def add_common_layers(y):
-        y = layers.BatchNormalization()(y)
+        # y = layers.BatchNormalization()(y)
         y = layers.Activation('relu')(y)
         return y
 
-    x = layers.Dense(1024)(input_tensor)
+    x = layers.Dense(1024)(x)
     x = add_common_layers(x)
 
     #
@@ -124,14 +113,11 @@ def generator_network(input_tensor):
         except NameError:
             nb_feature_maps = 512
 
-        x = layers.Deconvolution2D(nb_feature_maps, kernel_size,
-                                   **conv_layer_keyword_args_gen)(x)
+        x = layers.Deconvolution2D(nb_feature_maps, kernel_size, padding='same', strides=2)(x)
         x = add_common_layers(x)
 
     # number of feature maps => number of image channels
-    return layers.Deconvolution2D(img_channels, (1, 1),
-                                  activation='tanh',
-                                  padding='same')(x)
+    return layers.Deconvolution2D(img_channels, (1, 1), activation='tanh', padding='same')(x)
 
 
 def discriminator_network(x):
@@ -153,13 +139,8 @@ def discriminator_network(x):
         x = layers.Convolution2D(nb_feature_maps, kernel_size, **conv_layer_keyword_args)(x)
         x = add_common_layers(x)
 
-    x = layers.Flatten()(x)
-    # x = layers.GlobalAveragePooling2D()(x)
-
-    x = layers.Dense(1024, **dense_layer_keyword_args)(x)
-    x = add_common_layers(x)
-
-    return layers.Dense(1, **dense_layer_keyword_args)(x)
+    x = layers.Convolution2D(1, kernel_size, **conv_layer_keyword_args)(x)  # TODO: do we want to sub sample here?
+    return layers.GlobalAveragePooling2D()(x)
 
 
 def adversarial_training(data_dir, generator_model_path, discriminator_model_path):
@@ -181,24 +162,22 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     # define models
     #
 
-    generator_model = models.Model(inputs=generator_input_tensor, outputs=generated_image_tensor, name='generator')
-    discriminator_model = models.Model(inputs=generated_or_real_image_tensor, outputs=discriminator_output,
+    generator_model = models.Model(inputs=[generator_input_tensor], outputs=[generated_image_tensor], name='generator')
+    discriminator_model = models.Model(inputs=[generated_or_real_image_tensor], outputs=[discriminator_output],
                                        name='discriminator')
 
     combined_output = discriminator_model(generator_model(generator_input_tensor))
-    combined_model = models.Model(inputs=generator_input_tensor, outputs=combined_output, name='combined')
+    combined_model = models.Model(inputs=[generator_input_tensor], outputs=[combined_output], name='combined')
 
     #
     # define earth mover distance (Wasserstein loss)
     #
 
-    # NOTE: keras custom loss/objective functions are minimized
+    # keras custom loss/objective functions are always minimized (=> small positive number or large negative number)
     def em_loss(y_coefficients, y_pred):
-        # critic/discriminator: minimize E(f(g(z))) - E(f(x)) === E(f(g(z) - f(x)) === E(1 * f(g(z)) + -1 * f(x))
-        # => minimize f(g(z) and maximize f(x)
-        # generator: minimize -E(f(g(z))) === E(-1 * f(g(z)))
-        # => maximize f(g(z)) (i.e. generate data the critic thinks is real)
-        return tf.reduce_mean(tf.multiply(y_coefficients, y_pred))
+        # critic/discriminator: minimize f(g(z)) and maximize negative -f(x)
+        # generator: minimize f(g(z)) => maximize negative -f(g(z))
+        return tf.reduce_mean(tf.multiply(y_coefficients, y_pred), axis=0)
 
     #
     # compile models
@@ -206,10 +185,10 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     rms_prop = optimizers.RMSprop(lr=learning_rate)
 
-    generator_model.compile(optimizer=rms_prop, loss='binary_crossentropy')
-    discriminator_model.compile(optimizer=rms_prop, loss=em_loss)
+    generator_model.compile(optimizer=rms_prop, loss=em_loss)
+    discriminator_model.compile(optimizer=rms_prop, loss=[em_loss])
     discriminator_model.trainable = False
-    combined_model.compile(optimizer=rms_prop, loss=em_loss)
+    combined_model.compile(optimizer=rms_prop, loss=[em_loss])
 
     print(generator_model.summary())
     print(discriminator_model.summary())
@@ -243,8 +222,15 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         assert img_batch.shape == (batch_size, img_height, img_width, img_channels), img_batch.shape
         return img_batch
 
-    combined_loss = np.zeros(shape=len(combined_model.metrics_names))
-    disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
+    def clamp_weights():
+        for layer in discriminator_model.layers:
+            weights = layer.get_weights()
+            weights = [np.clip(w, -clipping_parameter, clipping_parameter) for w in weights]
+            layer.set_weights(weights)
+
+    disc_loss_real = np.empty(len(discriminator_model.metrics_names))
+    disc_loss_generated = np.empty(len(discriminator_model.metrics_names))
+    combined_loss = np.empty(len(combined_model.metrics_names))
 
     def train_discriminator_step():
         # sample a mini-batch of noise (generator input)
@@ -256,14 +242,11 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         # generate a batch of images with the current generator
         g_z = generator_model.predict(z)
 
-        x = np.concatenate((g_z, x))
-        assert x.shape == (batch_size * 2, img_height, img_width, img_channels)
-
-        # coefficients used to compute earth mover loss (not ground-truth labels)
-        y = np.concatenate((np.ones(batch_size), -np.ones(batch_size)))
-
         # update φ by taking an SGD step on mini-batch loss LD(φ)
-        return discriminator_model.train_on_batch(x, y)
+        l_r = discriminator_model.train_on_batch(x, -np.ones(batch_size))
+        l_g = discriminator_model.train_on_batch(g_z, np.ones(batch_size))
+
+        return l_r, l_g
 
     if generator_model_path:
         generator_model.load_weights(generator_model_path, by_name=True)
@@ -275,26 +258,37 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         print('pre-training the discriminator network...')
 
         for i in range(critic_pre_train_steps):
-            print('Step: {} of {} critic pre-train.'.format(i, nb_steps))
-            disc_loss = np.add(train_discriminator_step(), disc_loss)
+            print('Step: {} of {} critic pre-train.'.format(i, critic_pre_train_steps))
+            loss_real, loss_generated = train_discriminator_step()
+            clamp_weights()
+
+            disc_loss_real = np.append(disc_loss_real, loss_real)
+            disc_loss_generated = np.append(disc_loss_generated, loss_generated)
 
         discriminator_model.save(os.path.join(cache_dir, 'discriminator_model_pre_trained.h5'))
-        print('Discriminator model loss: {}.'.format(disc_loss / critic_pre_train_steps))
+        print('Discriminator model loss real: {}.'.format(np.mean(disc_loss_real, axis=0)))
+        print('Discriminator model loss generated: {}.'.format(np.mean(disc_loss_generated, axis=0)))
+        disc_loss_real = np.empty(len(discriminator_model.metrics_names))
+        disc_loss_generated = np.empty(len(discriminator_model.metrics_names))
 
     for i in range(nb_steps):
         print('Step: {} of {}.'.format(i, nb_steps))
 
         # train the discriminator
         for _ in range(k_d):
-            disc_loss = np.add(train_discriminator_step(), disc_loss)
+            loss_real, loss_generated = train_discriminator_step()
+            clamp_weights()
+
+            disc_loss_real = np.append(disc_loss_real, loss_real)
+            disc_loss_generated = np.append(disc_loss_generated, loss_generated)
 
         # train the generator
         for _ in range(k_g):
             generator_input = np.random.normal(size=(batch_size, rand_dim))
 
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            combined_loss = np.add(combined_model.train_on_batch(generator_input, -np.ones(batch_size)),
-                                   combined_loss)
+            loss_combined = combined_model.train_on_batch(generator_input, [-np.ones(batch_size, dtype=np.float32)])
+            combined_loss = np.append(combined_loss, loss_combined)
 
         if not i % log_interval and i != 0:
             # plot batch of generated images w/ current generator
@@ -309,11 +303,13 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
                                                  label_batch=['generated'] * batch_size + ['real'] * batch_size)
 
             # log loss summary
-            print('Generator model loss: {}.'.format(combined_loss / (log_interval * k_g)))
-            print('Discriminator model loss: {}.'.format(disc_loss / (log_interval * k_d)))
+            print('Generator model loss: {}.'.format(np.mean(combined_loss, axis=0)))
+            print('Discriminator model loss real: {}.'.format(np.mean(disc_loss_real, axis=0)))
+            print('Discriminator model loss generated: {}.'.format(np.mean(disc_loss_generated, axis=0)))
 
-            combined_loss = np.zeros(shape=len(combined_model.metrics_names))
-            disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
+            disc_loss_real = np.empty(len(discriminator_model.metrics_names))
+            disc_loss_generated = np.empty(len(discriminator_model.metrics_names))
+            combined_loss = np.empty(len(combined_model.metrics_names))
 
             # save model checkpoints
             model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_weights_step_{}.h5')
