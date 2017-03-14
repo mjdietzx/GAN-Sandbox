@@ -38,7 +38,7 @@ cache_dir = os.path.join(path, 'cache')
 # generator input params
 #
 
-rand_dim = 112  # dimension of the generator's input tensor (gaussian noise)
+rand_dim = 64  # dimension of the generator's input tensor (gaussian noise)
 
 #
 # image dimensions
@@ -56,10 +56,10 @@ nb_steps = 10000
 batch_size = 64
 k_d = 5  # number of critic network updates per adversarial training step
 k_g = 1  # number of generator network updates per adversarial training step
-log_interval = 5  # interval (in steps) at which to log loss summaries and save plots of image samples to disc
-learning_rate = 0.00005
-clipping_parameter = 0.25
-critic_pre_train_steps = 10  # number of steps to pre-train the critic before starting adversarial training
+log_interval = 25  # interval (in steps) at which to log loss summaries and save plots of image samples to disc
+learning_rate = 0.0001
+clipping_parameter = 0.1
+critic_pre_train_steps = 100  # number of steps to pre-train the critic before starting adversarial training
 
 
 #
@@ -83,8 +83,8 @@ def generator_network(x):
         y = layers.Activation('relu')(y)
         return y
 
-    x = layers.Dense(1024)(x)
-    x = add_common_layers(x)
+    # x = layers.Dense(1024)(x)
+    # x = add_common_layers(x)
 
     #
     # input dimensions to the first de-conv layer in the generator
@@ -95,7 +95,7 @@ def generator_network(x):
     assert img_height % height_dim == 0 and img_width % width_dim == 0, \
         'Generator network must be able to transform `x` into a tensor of shape (img_height, img_width, img_channels).'
 
-    x = layers.Dense(height_dim * width_dim * 128)(x)
+    x = layers.Dense(height_dim * width_dim * 64)(x)
     x = add_common_layers(x)
 
     x = layers.Reshape((height_dim, width_dim, -1))(x)
@@ -243,8 +243,8 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         g_z = generator_model.predict(z)
 
         # update φ by taking an SGD step on mini-batch loss LD(φ)
-        l_r = discriminator_model.train_on_batch(x, -np.ones(batch_size))
-        l_g = discriminator_model.train_on_batch(g_z, np.ones(batch_size))
+        l_r = discriminator_model.train_on_batch(x, np.ones(batch_size))
+        l_g = discriminator_model.train_on_batch(g_z, -np.ones(batch_size))
 
         return l_r, l_g
 
@@ -287,7 +287,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             generator_input = np.random.normal(size=(batch_size, rand_dim))
 
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            loss_combined = combined_model.train_on_batch(generator_input, [-np.ones(batch_size, dtype=np.float32)])
+            loss_combined = combined_model.train_on_batch(generator_input, [np.ones(batch_size, dtype=np.float32)])
             combined_loss = np.append(combined_loss, loss_combined)
 
         if not i % log_interval and i != 0:
