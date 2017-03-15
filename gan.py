@@ -1,16 +1,13 @@
 """
 wGAN implemented on top of keras/tensorflow as described in: [Wasserstein GAN](https://arxiv.org/pdf/1701.07875.pdf).
 
-Note: Requires Keras 2.0, `keras-2` branch, and Python 3.
+Note: Python 3.
 """
 
 import os
 import sys
 
 import keras
-assert int(keras.__version__[0]) == 2, 'Requires Keras v2.x.x. This corresponds to branch `keras-2`. ' \
-                                       'Run `$ sudo pip3 install -U git+https://github.com/fchollet/keras.git@keras-2`.'
-
 from keras import applications
 from keras import layers
 from keras import models
@@ -57,7 +54,7 @@ batch_size = 64
 k_d = 5  # number of critic network updates per adversarial training step
 k_g = 1  # number of generator network updates per adversarial training step
 log_interval = 25  # interval (in steps) at which to log loss summaries and save plots of image samples to disc
-learning_rate = 0.0001
+learning_rate = 0.0005
 clipping_parameter = 0.1
 critic_pre_train_steps = 100  # number of steps to pre-train the critic before starting adversarial training
 
