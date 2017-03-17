@@ -13,6 +13,7 @@ from keras import models
 from keras import optimizers
 from keras.preprocessing import image
 import numpy as np
+from PIL import Image
 
 from dlutils import plot_image_batch_w_labels
 
@@ -230,6 +231,9 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             g_z = generator_model.predict(fixed_noise)
             x = get_image_batch()
 
+            # save one generated image to disc
+            Image.fromarray(g_z[0], mode='RGB').save(os.path.join(cache_dir, 'generated_image_step_{}.png').format(i))
+            # save a batch of generated and real images to disc
             plot_image_batch_w_labels.plot_batch(np.concatenate((g_z, x)), os.path.join(cache_dir, figure_name),
                                                  label_batch=['generated'] * batch_size + ['real'] * batch_size)
 
