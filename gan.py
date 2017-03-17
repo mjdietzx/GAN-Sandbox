@@ -14,6 +14,7 @@ from keras import initializers
 from keras import optimizers
 from keras.preprocessing import image
 import numpy as np
+from PIL import Image
 import tensorflow as tf
 
 from dlutils import plot_image_batch_w_labels
@@ -54,13 +55,13 @@ k_d = 5  # number of critic network updates per adversarial training step
 k_g = 1  # number of generator network updates per adversarial training step
 learning_rate = 0.0005
 clipping_parameter = 0.1
-critic_pre_train_steps = 10  # number of steps to pre-train the critic before starting adversarial training
+critic_pre_train_steps = 100  # number of steps to pre-train the critic before starting adversarial training
 
 #
 # logging params
 #
 
-log_interval = 10  # interval (in steps) at which to log loss summaries and save plots of image samples to disc
+log_interval = 100  # interval (in steps) at which to log loss summaries and save plots of image samples to disc
 fixed_noise = np.random.normal(size=(batch_size, rand_dim))  # fixed noise to generate batches of generated images
 
 
@@ -281,6 +282,9 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             g_z = generator_model.predict(fixed_noise)
             x = get_image_batch()
 
+            # save one generated image to disc
+            Image.fromarray(g_z[0], mode='RGB').save(os.path.join(cache_dir, 'generated_image_step_{}.png').format(i))
+            # save a batch of generated and real images to disc
             plot_image_batch_w_labels.plot_batch(np.concatenate((g_z, x)), os.path.join(cache_dir, figure_name),
                                                  label_batch=['generated'] * batch_size + ['real'] * batch_size)
 
