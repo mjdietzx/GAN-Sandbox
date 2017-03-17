@@ -260,9 +260,9 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         for _ in range(k_d):
             loss_real, loss_generated = train_discriminator_step()
 
-        # only save loss for the last step in `k_d`
-        disc_loss_real = np.append(disc_loss_real, loss_real)
-        disc_loss_generated = np.append(disc_loss_generated, loss_generated)
+            # when plotting loss we will have to take `k_d` and `k_g` into account so the two plots align
+            disc_loss_real = np.append(disc_loss_real, loss_real)
+            disc_loss_generated = np.append(disc_loss_generated, loss_generated)
 
         # train the generator
         for _ in range(k_g):
@@ -271,8 +271,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             # update θ by taking an SGD step on mini-batch loss LR(θ)
             loss_combined = combined_model.train_on_batch(z, [np.ones(batch_size, dtype=np.float32)])
 
-        # only save loss for the last step in `k_g`
-        combined_loss = np.append(combined_loss, loss_combined)
+            combined_loss = np.append(combined_loss, loss_combined)
 
         if not i % log_interval and i != 0:
             # plot batch of generated images w/ current generator
