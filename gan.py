@@ -1,10 +1,10 @@
 """
 Standard GAN implemented on top of keras/tensorflow.
 
-Note: Currently only supports Python 3.
 """
 
 import os
+import pickle
 import sys
 
 from keras import applications
@@ -28,14 +28,14 @@ cache_dir = os.path.join(path, 'cache')
 # generator input params
 #
 
-rand_dim = 112  # dimension of generator's input tensor
+rand_dim = 64  # dimension of generator's input tensor (gaussian noise)
 
 #
 # image dimensions
 #
 
-img_height = 112
-img_width = 112
+img_height = 28
+img_width = 28
 img_channels = 3
 
 #
@@ -43,27 +43,39 @@ img_channels = 3
 #
 
 nb_steps = 10000
-batch_size = 128
-k_d = 1  # number of discriminator network updates per step
-k_g = 2  # number of generative network updates per step
-log_interval = 100  # interval (in steps) at which to log loss summaries & save plots of image samples to disc
+batch_size = 64
+k_d = 1  # number of discriminator network updates per adversarial training step
+k_g = 2  # number of generative network updates per adversarial training step
 
+#
+# logging params
+#
+
+log_interval = 100  # interval (in steps) at which to log loss summaries and save plots of image samples to disc
+fixed_noise = np.random.normal(size=(batch_size, rand_dim))  # fixed noise to generate batches of generated images
 
 #
 # shared network params
 #
 
-kernel_size = (3, 3)
-conv_layer_keyword_args = {'border_mode': 'same', 'subsample': (2, 2)}
+kernel_size = 4
+conv_layer_keyword_args = {'strides': 2, 'padding': 'same'}
 
 
-def generator_network(input_tensor):
+#
+# generator and discriminator architecture from: https://github.com/buriburisuri/ac-gan
+#
+
+def generator_network(x):
     def add_common_layers(y):
         y = layers.Activation('relu')(y)
         return y
 
+    x = layers.Dense(1024)(x)
+    x = add_common_layers(x)
+
     #
-    # input dimensions to the first conv layer in the generator
+    # input dimensions to the first de-conv layer in the generator
     #
 
     height_dim = 7
@@ -71,34 +83,16 @@ def generator_network(input_tensor):
     assert img_height % height_dim == 0 and img_width % width_dim == 0, \
         'Generator network must be able to transform `x` into a tensor of shape (img_height, img_width, img_channels).'
 
-    # 7 * 7 * 16 == 784 input neurons
-    x = layers.Dense(height_dim * width_dim * 16)(input_tensor)
+    x = layers.Dense(height_dim * width_dim * 128)(x)
     x = add_common_layers(x)
 
     x = layers.Reshape((height_dim, width_dim, -1))(x)
 
-    # generator will transform `x` into a tensor w/ the desired shape by up-sampling the spatial dimension of `x`
-    # through a series of strided de-convolutions (each de-conv layer up-samples spatial dim of `x` by a factor of 2).
-    while height_dim != img_height:
-        # spatial dim: (14 => 28 => 56 => 112 == img_height == img_width)
-        height_dim *= 2
-        width_dim *= 2
-
-        # nb_feature_maps: (512 => 256 => 128 => 64)
-        try:
-            nb_feature_maps //= 2
-        except NameError:
-            nb_feature_maps = 512
-
-        x = layers.convolutional.Deconvolution2D(nb_feature_maps, *kernel_size,
-                                                 output_shape=(None, height_dim, width_dim, nb_feature_maps),
-                                                 **conv_layer_keyword_args)(x)
-        x = add_common_layers(x)
+    x = layers.Conv2DTranspose(64, kernel_size, **conv_layer_keyword_args)(x)
+    x = add_common_layers(x)
 
     # number of feature maps => number of image channels
-    return layers.convolutional.Deconvolution2D(img_channels, 1, 1, activation='tanh',
-                                                border_mode='same',
-                                                output_shape=(None, img_height, img_width, img_channels))(x)
+    return layers.Conv2DTranspose(img_channels, 1, strides=2, padding='same', activation='tanh')(x)
 
 
 def discriminator_network(x):
@@ -106,22 +100,15 @@ def discriminator_network(x):
         y = layers.advanced_activations.LeakyReLU()(y)
         return y
 
-    height_dim = 7
+    x = layers.Conv2D(64, kernel_size, **conv_layer_keyword_args)(x)
+    x = add_common_layers(x)
 
-    # down sample with strided convolutions until we reach the desired spatial dimension (7 * 7 * nb_feature_maps)
-    while x.get_shape()[1] != height_dim:
-        # nb_feature_maps: (64 => 128 => 256 => 512)
-        try:
-            nb_feature_maps *= 2
-        except NameError:
-            nb_feature_maps = 64
-
-        x = layers.convolutional.Convolution2D(nb_feature_maps, *kernel_size, **conv_layer_keyword_args)(x)
-        x = add_common_layers(x)
+    x = layers.Conv2D(128, kernel_size, **conv_layer_keyword_args)(x)
+    x = add_common_layers(x)
 
     x = layers.Flatten()(x)
 
-    x = layers.Dense(16)(x)
+    x = layers.Dense(1024)(x)
     x = add_common_layers(x)
 
     return layers.Dense(1, activation='sigmoid')(x)
@@ -146,12 +133,13 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     # define models
     #
 
-    generator_model = models.Model(input=generator_input_tensor, output=generated_image_tensor, name='generator')
-    discriminator_model = models.Model(input=generated_or_real_image_tensor, output=discriminator_output,
+    generator_model = models.Model(inputs=[generator_input_tensor], outputs=[generated_image_tensor],
+                                   name='generator')
+    discriminator_model = models.Model(inputs=[generated_or_real_image_tensor], outputs=[discriminator_output],
                                        name='discriminator')
 
     combined_output = discriminator_model(generator_model(generator_input_tensor))
-    combined_model = models.Model(input=generator_input_tensor, output=combined_output, name='combined')
+    combined_model = models.Model(inputs=[generator_input_tensor], outputs=[combined_output], name='combined')
 
     #
     # compile models
@@ -160,12 +148,13 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     adam = optimizers.Adam(lr=0.0002, beta_1=0.5, beta_2=0.999)  # as described in appendix A of DeepMind's AC-GAN paper
 
     generator_model.compile(optimizer=adam, loss='binary_crossentropy')
-    discriminator_model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
+    discriminator_model.compile(optimizer=adam, loss='binary_crossentropy')
     discriminator_model.trainable = False
-    combined_model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
+    combined_model.compile(optimizer=adam, loss='binary_crossentropy')
 
     print(generator_model.summary())
     print(discriminator_model.summary())
+    print(combined_model.summary())
 
     #
     # data generators
@@ -173,7 +162,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     data_generator = image.ImageDataGenerator(
         preprocessing_function=applications.xception.preprocess_input,
-        dim_ordering='tf')
+        data_format='channels_last')
 
     flow_from_directory_params = {'target_size': (img_height, img_width),
                                   'color_mode': 'grayscale' if img_channels == 1 else 'rgb',
@@ -188,7 +177,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     def get_image_batch():
         img_batch = real_image_generator.next()
 
-        # keras generators may generate an incomplete batch for the last batch
+        # keras generators may generate an incomplete batch for the last batch in an epoch of data
         if len(img_batch) != batch_size:
             img_batch = real_image_generator.next()
 
@@ -199,9 +188,9 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     y_real = np.array([0] * batch_size)
     y_generated = np.array([1] * batch_size)
 
-    combined_loss = np.zeros(shape=len(combined_model.metrics_names))
-    disc_loss_real = np.zeros(shape=len(discriminator_model.metrics_names))
-    disc_loss_generated = np.zeros(shape=len(discriminator_model.metrics_names))
+    combined_loss = np.empty(shape=1)
+    disc_loss_real = np.empty(shape=1)
+    disc_loss_generated = np.empty(shape=1)
 
     if generator_model_path:
         generator_model.load_weights(generator_model_path, by_name=True)
@@ -213,50 +202,53 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
         # train the discriminator
         for _ in range(k_d):
-            generator_input = np.random.normal(size=(batch_size, rand_dim))
+            # sample a mini-batch of noise (generator input)
+            z = np.random.normal(size=(batch_size, rand_dim))
+
             # sample a mini-batch of real images
-            real_image_batch = get_image_batch()
+            x = get_image_batch()
 
             # generate a batch of images with the current generator
-            generated_image_batch = generator_model.predict(generator_input)
+            g_z = generator_model.predict(z)
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
-            disc_loss_real = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss_real)
-            disc_loss_generated = np.add(discriminator_model.train_on_batch(generated_image_batch, y_generated),
-                                         disc_loss_generated)
+            disc_loss_real = np.append(disc_loss_real, discriminator_model.train_on_batch(x, y_real))
+            disc_loss_generated = np.append(disc_loss_generated, discriminator_model.train_on_batch(g_z, y_generated))
 
         # train the generator
         for _ in range(k_g * 2):
-            generator_input = np.random.normal(size=(batch_size, rand_dim))
+            z = np.random.normal(size=(batch_size, rand_dim))
 
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            combined_loss = np.add(combined_model.train_on_batch(generator_input, y_real), combined_loss)
+            combined_loss = np.append(combined_loss, combined_model.train_on_batch(z, y_real))
 
         if not i % log_interval and i != 0:
             # plot batch of generated images w/ current generator
             figure_name = 'generated_image_batch_step_{}.png'.format(i)
             print('Saving batch of generated images at adversarial step: {}.'.format(i))
 
-            generated_image_batch = generator_model.predict(np.random.normal(size=(batch_size, rand_dim)))
-            real_image_batch = get_image_batch()
+            g_z = generator_model.predict(fixed_noise)
+            x = get_image_batch()
 
-            plot_image_batch_w_labels.plot_batch(np.concatenate((generated_image_batch, real_image_batch)),
-                                                 os.path.join(cache_dir, figure_name),
+            plot_image_batch_w_labels.plot_batch(np.concatenate((g_z, x)), os.path.join(cache_dir, figure_name),
                                                  label_batch=['generated'] * batch_size + ['real'] * batch_size)
 
             # log loss summary
-            print('Generator model loss: {}.'.format(combined_loss / (log_interval * k_g * 2)))
-            print('Discriminator model loss real: {}.'.format(disc_loss_real / (log_interval * k_d * 2)))
-            print('Discriminator model loss generated: {}.'.format(disc_loss_generated / (log_interval * k_d * 2)))
-
-            combined_loss = np.zeros(shape=len(combined_model.metrics_names))
-            disc_loss_real = np.zeros(shape=len(discriminator_model.metrics_names))
-            disc_loss_generated = np.zeros(shape=len(discriminator_model.metrics_names))
+            print('Generator model loss: {}.'.format(np.mean(combined_loss[-log_interval:], axis=0)))
+            print('Discriminator model loss real: {}.'.format(np.mean(disc_loss_real[-log_interval:], axis=0)))
+            print('Discriminator model loss generated: {}.'.format(np.mean(disc_loss_generated[-log_interval:], axis=0)))
 
             # save model checkpoints
             model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_weights_step_{}.h5')
             generator_model.save_weights(model_checkpoint_base_name.format('generator', i))
             discriminator_model.save_weights(model_checkpoint_base_name.format('discriminator', i))
+
+            # write the losses to disc as a serialized dict
+            with open(os.path.join(cache_dir, 'losses.pickle'), 'wb') as handle:
+                pickle.dump({'combined_loss': combined_loss,
+                             'disc_loss_real': disc_loss_real,
+                             'disc_loss_generated': disc_loss_generated},
+                            handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def main(data_dir, generator_model_path, discriminator_model_path):
