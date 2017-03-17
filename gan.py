@@ -46,7 +46,7 @@ img_channels = 3
 nb_steps = 10000
 batch_size = 64
 k_d = 1  # number of discriminator network updates per adversarial training step
-k_g = 2  # number of generative network updates per adversarial training step
+k_g = 1  # number of generative network updates per adversarial training step
 
 #
 # logging params
@@ -69,7 +69,8 @@ conv_layer_keyword_args = {'strides': 2, 'padding': 'same'}
 
 def generator_network(x):
     def add_common_layers(y):
-        y = layers.Activation('relu')(y)
+        y = layers.advanced_activations.LeakyReLU()(y)
+        y = layers.Dropout(0.25)(y)
         return y
 
     x = layers.Dense(1024)(x)
@@ -99,7 +100,10 @@ def generator_network(x):
 def discriminator_network(x):
     def add_common_layers(y):
         y = layers.advanced_activations.LeakyReLU()(y)
+        y = layers.Dropout(0.25)(y)
         return y
+
+    x = layers.GaussianNoise(stddev=0.2)(x)
 
     x = layers.Conv2D(64, kernel_size, **conv_layer_keyword_args)(x)
     x = add_common_layers(x)
@@ -163,7 +167,15 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     data_generator = image.ImageDataGenerator(
         preprocessing_function=applications.xception.preprocess_input,
-        data_format='channels_last')
+        data_format='channels_last',
+        rotation_range=180.0,
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        shear_range=0.1,
+        zoom_range=0.1,
+        channel_shift_range=0.1,
+        horizontal_flip=True,
+        vertical_flip=True)
 
     flow_from_directory_params = {'target_size': (img_height, img_width),
                                   'color_mode': 'grayscale' if img_channels == 1 else 'rgb',
@@ -184,10 +196,6 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
         assert img_batch.shape == (batch_size, img_height, img_width, img_channels), img_batch.shape
         return img_batch
-
-    # the target labels for the binary cross-entropy loss layer are 0 for every yj (real) and 1 for every xi (generated)
-    y_real = np.array([0] * batch_size)
-    y_generated = np.array([1] * batch_size)
 
     combined_loss = np.empty(shape=1)
     disc_loss_real = np.empty(shape=1)
@@ -213,15 +221,18 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             g_z = generator_model.predict(z)
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
-            disc_loss_real = np.append(disc_loss_real, discriminator_model.train_on_batch(x, y_real))
-            disc_loss_generated = np.append(disc_loss_generated, discriminator_model.train_on_batch(g_z, y_generated))
+            disc_loss_real = np.append(disc_loss_real, discriminator_model.train_on_batch(x, np.random.uniform(
+                low=0.7, high=1.2, size=batch_size)))
+            disc_loss_generated = np.append(disc_loss_generated, discriminator_model.train_on_batch(g_z,
+                np.random.uniform(low=0.0, high=0.3, size=batch_size)))
 
         # train the generator
         for _ in range(k_g * 2):
             z = np.random.normal(size=(batch_size, rand_dim))
 
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            combined_loss = np.append(combined_loss, combined_model.train_on_batch(z, y_real))
+            combined_loss = np.append(combined_loss, combined_model.train_on_batch(z, np.random.uniform(
+                low=0.7, high=1.2, size=batch_size)))
 
         if not i % log_interval and i != 0:
             # plot batch of generated images w/ current generator
