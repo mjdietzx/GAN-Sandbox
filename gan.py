@@ -145,7 +145,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
                                        outputs=[discriminator_output],
                                        name='discriminator')
 
-    combined_output = discriminator_model(generator_model(generator_input_tensor))[0]
+    combined_output = discriminator_model(generator_model(generator_input_tensor))
     combined_model = models.Model(inputs=[generator_input_tensor], outputs=[combined_output], name='combined')
 
     #
