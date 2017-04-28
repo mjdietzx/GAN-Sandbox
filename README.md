@@ -11,6 +11,8 @@ The `master` branch serves as a simple, clean and robust starting point for GAN 
 `cGAN`: As described in: [Image-to-Image Translation with Conditional Adversarial Networks](https://arxiv.org/pdf/1611.07004v1.pdf).  
 `wGAN`: As described in: [Wasserstein GAN](https://arxiv.org/abs/1701.07875) with improvements as described in: [Improved Training of Wasserstein GANs](https://arxiv.org/pdf/1704.00028.pdf).
 
+`SimGAN` here: https://github.com/wayaai/SimGAN.
+
 Note: `ACGAN` is a more limited form of `InfoGAN`. `InfoGAN` can take an arbitrary number of categorical and continuous latent variables as input to the generator. ACGAN is an InfoGAN in the case where the generator takes one categorical latent variable as input corresponding to the label of the image to be generated.
 
 `wGAN` objective function should be used for all variations of GANs instead of the Jenson-Shannon divergence.
