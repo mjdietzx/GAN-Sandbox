@@ -141,17 +141,15 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     #
 
     generator_model = models.Model(inputs=[generator_input_tensor], outputs=[generated_image_tensor], name='generator')
-
-    # we need a second loss term for the gradient penalty
     discriminator_model = models.Model(inputs=[generated_or_real_image_tensor],
-                                       outputs=[discriminator_output, discriminator_output],
+                                       outputs=[discriminator_output],
                                        name='discriminator')
 
     combined_output = discriminator_model(generator_model(generator_input_tensor))[0]
     combined_model = models.Model(inputs=[generator_input_tensor], outputs=[combined_output], name='combined')
 
     #
-    # define earth mover distance (wasserstein loss) and gradient penalty (improved wGAN)
+    # define earth mover distance (wasserstein loss)
     #
 
     # keras custom loss/objective functions are always minimized (=> small positive number or large negative number)
@@ -221,7 +219,8 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     epsilon = tf.placeholder(tf.float32, shape=(batch_size, 1, 1, 1))
     x_hat = epsilon * _x + (1.0 - epsilon) * _g_z
 
-    gradients = tf.gradients(discriminator_model(x_hat)[0], [x_hat])
+    # gradient penalty (improved wGAN)
+    gradients = tf.gradients(discriminator_model(x_hat), [x_hat])
     _gradient_penalty = 10.0 * tf.square(tf.norm(gradients[0], ord=2) - 1.0)
 
     # calculate discriminator's loss
