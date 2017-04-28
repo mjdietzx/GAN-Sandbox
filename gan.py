@@ -8,6 +8,7 @@ import os
 import sys
 
 from keras import applications
+from keras import backend as K
 from keras import layers
 from keras import models
 from keras import optimizers
@@ -211,33 +212,37 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     disc_loss = []
     combined_loss = []
 
+    #
+    # build the computation graph for calculating the gradient penalty
+    #
+
+    # sample a batch of noise (generator input)
+    _z = tf.random_normal(shape=(batch_size, rand_dim), mean=0.0, stddev=1.0, dtype=tf.float32)
+
+    # sample a batch of real images
+    _x = tf.placeholder(tf.float32, shape=(batch_size, img_height, img_width, img_channels))
+
+    # generate a batch of images with the current generator
+    _g_z = generator_model(_z)
+
+    # calculate `x_hat`
+    epsilon = tf.random_uniform(shape=(batch_size, 1, 1, 1), minval=0.0, maxval=1.0, dtype=tf.float32)
+    x_hat = epsilon * _x + (1.0 - epsilon) * _g_z
+
+    gradients = tf.gradients(discriminator_model(x_hat)[0], [x_hat], colocate_gradients_with_ops=True)
+    _gradient_penalty = 10.0 * tf.square(tf.norm(gradients[0], ord=2) - 1.0)
+
+    sess = K.get_session()
+    sess.run(tf.global_variables_initializer())
+
     def train_discriminator_step():
-        # sample a batch of noise (generator input)
-        _z = tf.random_normal(shape=(batch_size, rand_dim), mean=0.0, stddev=1.0, dtype=tf.float32)
-
-        # sample a batch of real images
-        _x = tf.placeholder(tf.float32, shape=(batch_size, img_height, img_width, img_channels))
-
-        # generate a batch of images with the current generator
-        _g_z = generator_model(_z)
-
-        # calculate `x_hat`
-        epsilon = tf.random_uniform(shape=(batch_size, 1, 1, 1), minval=0.0, maxval=1.0, dtype=tf.float32)
-        x_hat = epsilon * _x + (1.0 - epsilon) * _g_z
-
-        gradients = tf.gradients(discriminator_model(x_hat)[0], [x_hat], colocate_gradients_with_ops=True)
-        _gradient_penalty = 10.0 * tf.square(tf.norm(gradients[0], ord=2) - 1.0)
-
-        with tf.Session() as sess:
-            real_image_batch = get_image_batch()
-
-            sess.run(tf.global_variables_initializer())
-            generated_image_batch, gp_loss = sess.run([_g_z, _gradient_penalty], feed_dict={_x: real_image_batch})
+        real_image_batch = get_image_batch()
+        generated_image_batch, gp_loss = sess.run([_g_z, _gradient_penalty], feed_dict={_x: real_image_batch})
 
         dummy = np.zeros(batch_size * 2)
         dummy[0] = gp_loss
 
-        # update φ by taking an SGD step on mini-batch loss LD(φ)
+        # update φ by taking an SGD step on mini-batch loss LD(φ) TODO: no need to run through disc again
         return discriminator_model.train_on_batch(
             [np.concatenate((real_image_batch, generated_image_batch), axis=0)],
             [np.concatenate((-np.ones(batch_size), np.ones(batch_size)), axis=0), dummy]
