@@ -156,23 +156,15 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     # keras custom loss/objective functions are always minimized (=> small positive number or large negative number)
     def em_loss(y_coefficients, y_pred):
-        return tf.reduce_mean(tf.multiply(y_coefficients, y_pred), axis=0)
+        return tf.reduce_mean(tf.multiply(y_coefficients, y_pred))
 
-    # kind of a hack to calculate the gradient penalty outside of the loss function
-    # but this is the simplest way I could figure out to do this in keras
-    def gradient_penalty(gradient_penalty_val, _):
-        return gradient_penalty_val[0]
 
     #
     # compile models
     #
 
     adam = optimizers.Adam(lr=.0001, beta_1=0.5, beta_2=0.9)
-
     generator_model.compile(optimizer=adam, loss=[em_loss])
-    discriminator_model.compile(optimizer=adam, loss=[em_loss, gradient_penalty])
-    discriminator_model.trainable = False
-    combined_model.compile(optimizer=adam, loss=[em_loss])
 
     print(generator_model.summary())
     print(discriminator_model.summary())
@@ -229,28 +221,32 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     epsilon = tf.placeholder(tf.float32, shape=(batch_size, 1, 1, 1))
     x_hat = epsilon * _x + (1.0 - epsilon) * _g_z
 
-    gradients = tf.gradients(discriminator_model(x_hat)[0], [x_hat], colocate_gradients_with_ops=True)
+    gradients = tf.gradients(discriminator_model(x_hat)[0], [x_hat])
     _gradient_penalty = 10.0 * tf.square(tf.norm(gradients[0], ord=2) - 1.0)
 
+    # calculate discriminator's loss
+    _disc_loss = em_loss(tf.ones(batch_size), discriminator_model(_g_z)) - \
+        em_loss(tf.ones(batch_size), discriminator_model(_x)) + \
+        _gradient_penalty
+
+    # update φ by taking an SGD step on mini-batch loss LD(φ)
+    disc_optimizer = tf.train.AdamOptimizer(learning_rate=.0001, beta1=0.5, beta2=0.9).minimize(
+        _disc_loss, var_list=discriminator_model.trainable_weights)
+
+    # wait to freeze the discriminator
+    discriminator_model.trainable = False
+    combined_model.compile(optimizer=adam, loss=[em_loss])
+
     sess = K.get_session()
-    sess.run(tf.global_variables_initializer())
 
     def train_discriminator_step():
-        real_image_batch = get_image_batch()
-        generated_image_batch, gp_loss = sess.run([_g_z, _gradient_penalty], feed_dict={
+        d_l, _ = sess.run([_disc_loss, disc_optimizer], feed_dict={
             _z: np.random.normal(loc=0.0, scale=1.0, size=(batch_size, rand_dim)),
-            _x: real_image_batch,
+            _x: get_image_batch(),
             epsilon: np.random.uniform(low=0.0, high=1.0, size=(batch_size, 1, 1, 1))
         })
 
-        dummy = np.zeros(batch_size * 2)
-        dummy[0] = gp_loss
-
-        # update φ by taking an SGD step on mini-batch loss LD(φ) TODO: no need to run through disc again
-        return discriminator_model.train_on_batch(
-            [np.concatenate((real_image_batch, generated_image_batch), axis=0)],
-            [np.concatenate((-np.ones(batch_size), np.ones(batch_size)), axis=0), dummy]
-        )
+        return d_l
 
     if generator_model_path:
         generator_model.load_weights(generator_model_path, by_name=True)
@@ -277,7 +273,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
         # train the generator
         for _ in range(k_g):
-            z = np.random.normal(size=(batch_size, rand_dim), loc=0.0, scale=1.0)
+            z = np.random.normal(loc=0.0, scale=1.0, size=(batch_size, rand_dim))
 
             # update θ by taking an SGD step on mini-batch loss LG(θ)
             loss = combined_model.train_on_batch(z, [-np.ones(batch_size)])
