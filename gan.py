@@ -41,8 +41,8 @@ rand_dim = 64  # dimension of the generator's input tensor (gaussian noise)
 # image dimensions
 #
 
-img_height = 28
-img_width = 28
+img_height = 224
+img_width = 224
 img_channels = 3
 
 #
@@ -66,59 +66,136 @@ fixed_noise = np.random.normal(size=(batch_size, rand_dim))  # fixed noise to ge
 # shared network params
 #
 
-kernel_size = 3
-conv_layer_keyword_args = {
-    'strides': 2,
-    'padding': 'same',
-}
+cardinality = 1
+
+
+def add_common_layers(y):
+    # y = layers.BatchNormalization()(y)
+    y = layers.LeakyReLU()(y)
+
+    return y
+
+
+def grouped_convolution(y, nb_channels, _strides, _transposed=False):
+    # when `cardinality` == 1 this is just a standard convolution
+    if cardinality == 1:
+        if _strides != (1, 1) and _transposed:
+            return layers.Conv2DTranspose(nb_channels, kernel_size=(3, 3), strides=_strides, padding='same')(y)
+        else:
+            return layers.Conv2D(nb_channels, kernel_size=(3, 3), strides=_strides, padding='same')(y)
+
+    assert not nb_channels % cardinality
+    _d = nb_channels // cardinality
+
+    # in a grouped convolution layer, input and output channels are divided into `cardinality` groups,
+    # and convolutions are separately performed within each group
+    groups = []
+    for j in range(cardinality):
+        group = layers.Lambda(lambda z: z[:, :, :, j * _d:j * _d + _d])(y)
+        if _strides != (1, 1) and _transposed:
+            groups.append(layers.Conv2DTranspose(_d, kernel_size=(3, 3), strides=_strides, padding='same')(group))
+        else:
+            groups.append(layers.Conv2D(_d, kernel_size=(3, 3), strides=_strides, padding='same')(group))
+
+    # the grouped convolutional layer concatenates them as the outputs of the layer
+    y = layers.concatenate(groups)
+
+    return y
+
+
+def residual_block(y, nb_channels_in, nb_channels_out, _strides=(1, 1), _project_shortcut=False, _transposed=False):
+    """
+    Our network consists of a stack of residual blocks. These blocks have the same topology,
+    and are subject to two simple rules:
+    - If producing spatial maps of the same size, the blocks share the same hyper-parameters (width and filter sizes).
+    - Each time the spatial map is down-sampled by a factor of 2, the width of the blocks is multiplied by a factor of 2.
+      * If up-sampled in case of `_transposed` == True, the width of the blocks is divided by a factor of 2.
+    """
+    shortcut = y
+
+    # we modify the residual building block as a bottleneck design to make the network more economical
+    y = layers.Conv2D(nb_channels_in, kernel_size=(1, 1), strides=(1, 1), padding='same')(y)
+    y = add_common_layers(y)
+
+    # ResNeXt (identical to ResNet when `cardinality` == 1)
+    y = grouped_convolution(y, nb_channels_in, _strides=_strides, _transposed=_transposed)
+    y = add_common_layers(y)
+
+    y = layers.Conv2D(nb_channels_out, kernel_size=(1, 1), strides=(1, 1), padding='same')(y)
+    # batch normalization is employed after aggregating the transformations and before adding to the shortcut
+    # y = layers.BatchNormalization()(y)
+
+    # identity shortcuts used directly when the input and output are of the same dimensions
+    if _project_shortcut or _strides != (1, 1):
+        # when the dimensions increase projection shortcut is used to match dimensions (done by 1×1 convolutions)
+        # when the shortcuts go across feature maps of two sizes, they are performed with a stride of 2
+        if _strides != (1, 1) and _transposed:
+            shortcut = layers.Conv2DTranspose(nb_channels_out, kernel_size=(1, 1), strides=_strides, padding='same')(shortcut)
+        else:
+            shortcut = layers.Conv2D(nb_channels_out, kernel_size=(1, 1), strides=_strides, padding='same')(shortcut)
+
+        # shortcut = layers.BatchNormalization()(shortcut)
+
+    y = layers.add([shortcut, y])
+
+    # relu is performed right after each batch normalization,
+    # expect for the output of the block where relu is performed after the adding to the shortcut
+    y = layers.LeakyReLU()(y)
+
+    return y
+
+
+def stack_blocks(x, transposed=False):
+    # conv2
+    for i in range(2):
+        strides = (2, 2) if i == 0 else (1, 1)
+        x = residual_block(x, 64, 256, _strides=strides, _transposed=transposed)
+
+    # conv3
+    for i in range(2):
+        # down-sampling is performed by conv3_1, conv4_1, and conv5_1 with a stride of 2
+        strides = (2, 2) if i == 0 else (1, 1)
+        x = residual_block(x, 128, 512, _strides=strides, _transposed=transposed)
+
+    # conv4
+    for i in range(2):
+        strides = (2, 2) if i == 0 else (1, 1)
+        x = residual_block(x, 256, 1024, _strides=strides, _transposed=transposed)
+
+    # conv5
+    for i in range(2):
+        strides = (2, 2) if i == 0 else (1, 1)
+        x = residual_block(x, 512, 2048, _strides=strides, _transposed=transposed)
+
+    return x
 
 
 def generator_network(x):
-    def add_common_layers(y):
-        y = layers.Activation('relu')(y)
-        return y
-
-    x = layers.Dense(1024)(x)
+    x = layers.Dense(64 * 7 * 7)(x)
     x = add_common_layers(x)
 
-    #
-    # input dimensions to the first de-conv layer in the generator
-    #
+    x = layers.Reshape((7, 7, 64))(x)
+    x = stack_blocks(x, transposed=True)
 
-    height_dim = 7
-    width_dim = 7
-    assert img_height % height_dim == 0 and img_width % width_dim == 0, \
-        'Generator network must be able to transform `x` into a tensor of shape (img_height, img_width, img_channels).'
-
-    x = layers.Dense(height_dim * width_dim * 128)(x)
-    x = add_common_layers(x)
-
-    x = layers.Reshape((height_dim, width_dim, -1))(x)
-
-    x = layers.Conv2DTranspose(64, kernel_size, **conv_layer_keyword_args)(x)
-    x = add_common_layers(x)
-
+    # conv5 (conv1 disc)
     # number of feature maps => number of image channels
-    return layers.Conv2DTranspose(img_channels, 1, strides=2, padding='same', activation='tanh')(x)
+    return layers.Conv2DTranspose(img_channels, kernel_size=(7, 7), strides=(2, 2), padding='same', activation='tanh')(x)
 
 
 def discriminator_network(x):
-    def add_common_layers(y):
-        y = layers.advanced_activations.LeakyReLU()(y)
-        return y
-
-    x = layers.Conv2D(64, kernel_size, **conv_layer_keyword_args)(x)
+    """
+    ResNeXt by default. For ResNet set `cardinality` = 1 above.
+    """
+    # conv1
+    x = layers.Conv2D(64, kernel_size=(7, 7), strides=(2, 2), padding='same')(x)
     x = add_common_layers(x)
 
-    x = layers.Conv2D(128, kernel_size, **conv_layer_keyword_args)(x)
-    x = add_common_layers(x)
+    x = stack_blocks(x)
 
-    x = layers.Flatten()(x)
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dense(1)(x)
 
-    x = layers.Dense(1024)(x)
-    x = add_common_layers(x)
-
-    return layers.Dense(1)(x)
+    return x
 
 
 def adversarial_training(data_dir, generator_model_path, discriminator_model_path):
@@ -152,21 +229,55 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     # define earth mover distance (wasserstein loss)
     #
 
-    # keras custom loss/objective functions are always minimized (=> small positive number or large negative number)
     def em_loss(y_coefficients, y_pred):
         return tf.reduce_mean(tf.multiply(y_coefficients, y_pred))
 
+    #
+    # construct computation graph for calculating the gradient penalty (improved wGAN) and training the discriminator
+    #
+
+    # sample a batch of noise (generator input)
+    _z = tf.placeholder(tf.float32, shape=(batch_size, rand_dim))
+
+    # sample a batch of real images
+    _x = tf.placeholder(tf.float32, shape=(batch_size, img_height, img_width, img_channels))
+
+    # generate a batch of images with the current generator
+    _g_z = generator_model(_z)
+
+    # calculate `x_hat`
+    epsilon = tf.placeholder(tf.float32, shape=(batch_size, 1, 1, 1))
+    x_hat = epsilon * _x + (1.0 - epsilon) * _g_z
+
+    # gradient penalty
+    gradients = tf.gradients(discriminator_model(x_hat), [x_hat])
+    _gradient_penalty = 10.0 * tf.square(tf.norm(gradients[0], ord=2) - 1.0)
+
+    # calculate discriminator's loss
+    _disc_loss = em_loss(tf.ones(batch_size), discriminator_model(_g_z)) - \
+        em_loss(tf.ones(batch_size), discriminator_model(_x)) + \
+        _gradient_penalty
+
+    # update φ by taking an SGD step on mini-batch loss LD(φ)
+    disc_optimizer = tf.train.AdamOptimizer(learning_rate=.0001, beta1=0.5, beta2=0.9).minimize(
+        _disc_loss, var_list=discriminator_model.trainable_weights)
+
+    sess = K.get_session()
 
     #
     # compile models
     #
 
     adam = optimizers.Adam(lr=.0001, beta_1=0.5, beta_2=0.9)
-    generator_model.compile(optimizer=adam, loss=[em_loss])
+
+    discriminator_model.trainable = False
+    combined_model.compile(optimizer=adam, loss=[em_loss])
 
     print(generator_model.summary())
     print(discriminator_model.summary())
     print(combined_model.summary())
+
+    # assert (len(discriminator_model.layers) - 4) / 6 == N
 
     #
     # data generators
@@ -201,42 +312,6 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     disc_loss = []
     combined_loss = []
-
-    #
-    # build the computation graph for calculating the gradient penalty
-    #
-
-    # sample a batch of noise (generator input)
-    _z = tf.placeholder(tf.float32, shape=(batch_size, rand_dim))
-
-    # sample a batch of real images
-    _x = tf.placeholder(tf.float32, shape=(batch_size, img_height, img_width, img_channels))
-
-    # generate a batch of images with the current generator
-    _g_z = generator_model(_z)
-
-    # calculate `x_hat`
-    epsilon = tf.placeholder(tf.float32, shape=(batch_size, 1, 1, 1))
-    x_hat = epsilon * _x + (1.0 - epsilon) * _g_z
-
-    # gradient penalty (improved wGAN)
-    gradients = tf.gradients(discriminator_model(x_hat), [x_hat])
-    _gradient_penalty = 10.0 * tf.square(tf.norm(gradients[0], ord=2) - 1.0)
-
-    # calculate discriminator's loss
-    _disc_loss = em_loss(tf.ones(batch_size), discriminator_model(_g_z)) - \
-        em_loss(tf.ones(batch_size), discriminator_model(_x)) + \
-        _gradient_penalty
-
-    # update φ by taking an SGD step on mini-batch loss LD(φ)
-    disc_optimizer = tf.train.AdamOptimizer(learning_rate=.0001, beta1=0.5, beta2=0.9).minimize(
-        _disc_loss, var_list=discriminator_model.trainable_weights)
-
-    # wait to freeze the discriminator
-    discriminator_model.trainable = False
-    combined_model.compile(optimizer=adam, loss=[em_loss])
-
-    sess = K.get_session()
 
     def train_discriminator_step():
         d_l, _ = sess.run([_disc_loss, disc_optimizer], feed_dict={
