@@ -41,8 +41,8 @@ rand_dim = 64  # dimension of the generator's input tensor (gaussian noise)
 # image dimensions
 #
 
-img_height = 224
-img_width = 224
+img_height = 56
+img_width = 56
 img_channels = 3
 
 #
@@ -66,7 +66,7 @@ fixed_noise = np.random.normal(size=(batch_size, rand_dim))  # fixed noise to ge
 # shared network params
 #
 
-cardinality = 1
+cardinality = 16
 
 
 def add_common_layers(y):
@@ -158,14 +158,14 @@ def stack_blocks(x, transposed=False):
         x = residual_block(x, 128, 512, _strides=strides, _transposed=transposed)
 
     # conv4
-    for i in range(2):
+    """for i in range(2):
         strides = (2, 2) if i == 0 else (1, 1)
         x = residual_block(x, 256, 1024, _strides=strides, _transposed=transposed)
 
     # conv5
     for i in range(2):
         strides = (2, 2) if i == 0 else (1, 1)
-        x = residual_block(x, 512, 2048, _strides=strides, _transposed=transposed)
+        x = residual_block(x, 512, 2048, _strides=strides, _transposed=transposed)"""
 
     return x
 
@@ -337,44 +337,48 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
         discriminator_model.save(os.path.join(cache_dir, 'discriminator_model_pre_trained.h5'))
 
     for i in range(nb_steps):
-        print('Step: {} of {}.'.format(i, nb_steps))
+        try:
+            print('Step: {} of {}.'.format(i, nb_steps))
 
-        # train the discriminator
-        for _ in range(k_d):
-            # when plotting loss we will have to take `k_d` and `k_g` into account so the two plots align
-            loss = train_discriminator_step()
-            disc_loss.append(loss)
+            # train the discriminator
+            for _ in range(k_d):
+                # when plotting loss we will have to take `k_d` and `k_g` into account so the two plots align
+                loss = train_discriminator_step()
+                disc_loss.append(loss)
 
-        # train the generator
-        for _ in range(k_g):
-            z = np.random.normal(loc=0.0, scale=1.0, size=(batch_size, rand_dim))
+            # train the generator
+            for _ in range(k_g):
+                z = np.random.normal(loc=0.0, scale=1.0, size=(batch_size, rand_dim))
 
-            # update θ by taking an SGD step on mini-batch loss LG(θ)
-            loss = combined_model.train_on_batch(z, [-np.ones(batch_size)])
-            combined_loss.append(loss)
+                # update θ by taking an SGD step on mini-batch loss LG(θ)
+                loss = combined_model.train_on_batch(z, [-np.ones(batch_size)])
+                combined_loss.append(loss)
 
-        if not i % log_interval and i != 0:
-            # plot batch of generated images w/ current generator
-            figure_name = 'generated_image_batch_step_{}.png'.format(i)
-            print('Saving batch of generated images at adversarial step: {}.'.format(i))
+            if not i % log_interval and i != 0:
+                # plot batch of generated images w/ current generator
+                figure_name = 'generated_image_batch_step_{}.png'.format(i)
+                print('Saving batch of generated images at adversarial step: {}.'.format(i))
 
-            g_z = generator_model.predict(fixed_noise)
-            x = get_image_batch()
+                g_z = generator_model.predict(fixed_noise)
+                x = get_image_batch()
 
-            # save one generated image to disc
-            Image.fromarray(g_z[0], mode='RGB').save(os.path.join(cache_dir, 'generated_image_step_{}.png').format(i))
-            # save a batch of generated and real images to disc
-            plot_image_batch_w_labels.plot_batch(np.concatenate((g_z, x)), os.path.join(cache_dir, figure_name),
-                                                 label_batch=['generated'] * batch_size + ['real'] * batch_size)
+                # save one generated image to disc
+                Image.fromarray(g_z[0], mode='RGB').save(os.path.join(cache_dir, 'generated_image_step_{}.png').format(i))
+                # save a batch of generated and real images to disc
+                plot_image_batch_w_labels.plot_batch(np.concatenate((g_z, x)), os.path.join(cache_dir, figure_name),
+                                                     label_batch=['generated'] * batch_size + ['real'] * batch_size)
 
-            # log loss summary
-            print('Generator model loss: {}.'.format(np.mean(np.asarray(combined_loss[-log_interval:]), axis=0)))
-            print('Discriminator model loss: {}.'.format(np.mean(np.asarray(disc_loss[-log_interval:]), axis=0)))
+                # log loss summary
+                print('Generator model loss: {}.'.format(np.mean(np.asarray(combined_loss[-log_interval:]), axis=0)))
+                print('Discriminator model loss: {}.'.format(np.mean(np.asarray(disc_loss[-log_interval:]), axis=0)))
 
-            # save model checkpoints
-            model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_weights_step_{}.h5')
-            generator_model.save_weights(model_checkpoint_base_name.format('generator', i))
-            discriminator_model.save_weights(model_checkpoint_base_name.format('discriminator', i))
+                # save model checkpoints
+                model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_weights_step_{}.h5')
+                generator_model.save_weights(model_checkpoint_base_name.format('generator', i))
+                discriminator_model.save_weights(model_checkpoint_base_name.format('discriminator', i))
+        except Exception as e:
+            print(e)
+            continue
 
 
 def main(data_dir, generator_model_path, discriminator_model_path):
