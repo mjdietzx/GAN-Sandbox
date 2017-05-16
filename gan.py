@@ -55,7 +55,7 @@ nb_steps = 50000
 batch_size = 64
 k_d = 5  # number of critic network updates per adversarial training step
 k_g = 1  # number of generator network updates per adversarial training step
-critic_pre_train_steps = 1  # number of steps to pre-train the critic before starting adversarial training
+critic_pre_train_steps = 100  # number of steps to pre-train the critic before starting adversarial training
 
 #
 # logging params
