@@ -12,6 +12,7 @@ from keras import layers
 
 cardinality = 1  # this is just ResNet when `cardinality` == 1
 img_channels = 3  # also defined in `gan.py`
+rand_dim = 64  # dimension of the generator's input tensor (gaussian noise)
 
 
 def add_common_layers(y):
@@ -115,7 +116,8 @@ def stack_blocks(x, transposed=False):
     return x
 
 
-def generator_network(x):
+# maps samples from the prior p(z) (a source of noise) to the input space
+def decoder_network(x):
     x = layers.Dense(64 * 7 * 7)(x)
     x = add_common_layers(x)
 
@@ -127,7 +129,7 @@ def generator_network(x):
     return layers.Conv2DTranspose(img_channels, kernel_size=(7, 7), strides=(2, 2), padding='same', activation='tanh')(x)
 
 
-def discriminator_network(x):
+def discriminator_network(x, z):
     """
     ResNeXt by default. For ResNet set `cardinality` = 1 above.
     """
@@ -138,6 +140,21 @@ def discriminator_network(x):
     x = stack_blocks(x)
 
     x = layers.GlobalAveragePooling2D()(x)
+    x = layers.concatenate([x, z], axis=-1)
+
     x = layers.Dense(1)(x)
+
+    return x
+
+
+# maps data samples x to z-space
+def encoder_network(x):
+    x = layers.Conv2D(64, kernel_size=(7, 7), strides=(2, 2), padding='same')(x)
+    x = add_common_layers(x)
+
+    x = stack_blocks(x)
+
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dense(rand_dim)(x)
 
     return x
