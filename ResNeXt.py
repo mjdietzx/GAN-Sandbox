@@ -133,15 +133,20 @@ def discriminator_network(x, z):
     """
     ResNeXt by default. For ResNet set `cardinality` = 1 above.
     """
-    # conv1
+    # image space
     x = layers.Conv2D(64, kernel_size=(7, 7), strides=(2, 2), padding='same')(x)
     x = add_common_layers(x)
 
     x = stack_blocks(x)
 
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.concatenate([x, z], axis=-1)
 
+    # latent space
+    z = layers.Dense(512)(z)
+    z = add_common_layers(z)
+
+    # output
+    x = layers.concatenate([x, z], axis=-1)
     x = layers.Dense(1)(x)
 
     return x

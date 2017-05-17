@@ -14,7 +14,6 @@ from keras import models
 from keras import optimizers
 from keras.preprocessing import image
 import numpy as np
-from PIL import Image
 import tensorflow as tf
 
 from dlutils import plot_image_batch_w_labels
@@ -52,7 +51,7 @@ img_channels = 3
 #
 
 nb_steps = 50000
-batch_size = 64
+batch_size = 32
 k_d = 5  # number of critic network updates per adversarial training step
 k_g = 1  # number of generator network updates per adversarial training step
 critic_pre_train_steps = 100  # number of steps to pre-train the critic before starting adversarial training
@@ -66,7 +65,7 @@ log_interval = 100  # interval (in steps) at which to log loss summaries and sav
 
 def adversarial_training(data_dir, generator_model_path, discriminator_model_path, encoder_model_path):
     """
-    Adversarial training of the generator network Gθ and discriminator network Dφ.
+    Adversarial training of the generator networks Gθ and E and discriminator network Dφ.
 
     """
     #
@@ -89,17 +88,16 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     #
 
     generator_model = models.Model(inputs=[latent_noise_tensor], outputs=[generated_image_tensor], name='generator')
+    encoder_model = models.Model(inputs=[real_image_tensor], outputs=[encoded_latent_noise_tensor], name='encoder')
     discriminator_model = models.Model(inputs=[generated_or_real_image_tensor, encoded_or_real_latent_noise_tensor],
                                        outputs=[discriminator_output],
                                        name='discriminator')
 
-    encoder_model = models.Model(inputs=[real_image_tensor], outputs=[encoded_latent_noise_tensor], name='encoder')
+    combined_output_e = discriminator_model(inputs=[real_image_tensor, encoder_model(real_image_tensor)])
+    combined_model_e = models.Model(inputs=[real_image_tensor], outputs=[combined_output_e], name='combined_model_e')
 
     combined_output_g = discriminator_model(inputs=[generator_model(latent_noise_tensor), latent_noise_tensor])
     combined_model_g = models.Model(inputs=[latent_noise_tensor], outputs=[combined_output_g], name='combined_model_g')
-
-    combined_output_d = discriminator_model(inputs=[real_image_tensor, encoder_model(real_image_tensor)])
-    combined_model_d = models.Model(inputs=[real_image_tensor], outputs=[combined_output_d], name='combined_model_d')
 
     #
     # define earth mover distance (wasserstein loss)
@@ -117,11 +115,10 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     # sample a batch of real images
     real_images = tf.placeholder(tf.float32, shape=(batch_size, img_height, img_width, img_channels))
+    encoded_latent_noise = encoder_model(real_images)
 
     # generate a batch of images with the current generator
     generated_images = generator_model(latent_noise)
-
-    generated_latent_noise = encoder_model(real_images)
 
     # calculate `x_hat`
     epsilon = tf.placeholder(tf.float32, shape=(batch_size, 1, 1, 1))
@@ -129,7 +126,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     # calculate `z_hat`
     _epsilon = tf.placeholder(tf.float32, shape=(batch_size, rand_dim))
-    z_hat = _epsilon * latent_noise + (1.0 - _epsilon) * generated_latent_noise
+    z_hat = _epsilon * latent_noise + (1.0 - _epsilon) * encoded_latent_noise
 
     # gradient penalty
     gradients = tf.gradients(discriminator_model(inputs=[x_hat, z_hat]), [x_hat, z_hat])
@@ -137,12 +134,12 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     # calculate discriminator's loss
     _disc_loss = em_loss(tf.ones(batch_size), discriminator_model(inputs=[generated_images, latent_noise])) - \
-        em_loss(tf.ones(batch_size), discriminator_model(inputs=[real_images, generated_latent_noise])) + \
+        em_loss(tf.ones(batch_size), discriminator_model(inputs=[real_images, encoded_latent_noise])) + \
         _gradient_penalty
 
     # update φ by taking an SGD step on mini-batch loss LD(φ)
     disc_optimizer = tf.train.AdamOptimizer(learning_rate=.0001, beta1=0.5, beta2=0.9).minimize(
-        _disc_loss, var_list=combined_model_d.trainable_weights)
+        _disc_loss, var_list=discriminator_model.trainable_weights)
 
     sess = K.get_session()
 
@@ -152,15 +149,14 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
     adam = optimizers.Adam(lr=.0001, beta_1=0.5, beta_2=0.9)
 
-    combined_model_d.compile(optimizer=adam, loss=[em_loss])
     discriminator_model.trainable = False
-
+    combined_model_e.compile(optimizer=adam, loss=[em_loss])
     combined_model_g.compile(optimizer=adam, loss=[em_loss])
 
     print(generator_model.summary())
     print(encoder_model.summary())
     print(discriminator_model.summary())
-    print(combined_model_d.summary())
+    print(combined_model_e.summary())
     print(combined_model_g.summary())
 
     #
@@ -240,11 +236,16 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
             # train the generator
             for _ in range(k_g):
+                x = get_image_batch()
+
+                loss_e = combined_model_e.train_on_batch(x, [-np.ones(batch_size)])
+                combined_loss.append(loss_e)
+
                 z = np.random.normal(loc=0.0, scale=1.0, size=(batch_size, rand_dim))
 
                 # update θ by taking an SGD step on mini-batch loss LG(θ)
-                loss = combined_model_g.train_on_batch(z, [-np.ones(batch_size)])
-                combined_loss.append(loss)
+                loss_g = combined_model_g.train_on_batch(z, [-np.ones(batch_size)])
+                combined_loss.append(loss_g)
 
             if not i % log_interval and i != 0:
                 # plot batch of generated images w/ current generator
