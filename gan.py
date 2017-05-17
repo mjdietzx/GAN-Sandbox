@@ -269,7 +269,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
                 model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_weights_step_{}.h5')
                 generator_model.save_weights(model_checkpoint_base_name.format('generator', i))
                 discriminator_model.save_weights(model_checkpoint_base_name.format('discriminator', i))
-                encoder_model_path.save_weights(model_checkpoint_base_name.format('encoder', i))
+                encoder_model.save_weights(model_checkpoint_base_name.format('encoder', i))
         except Exception as e:
             print(e)
             continue
