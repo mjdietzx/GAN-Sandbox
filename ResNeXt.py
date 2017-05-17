@@ -155,6 +155,6 @@ def encoder_network(x):
     x = stack_blocks(x)
 
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(rand_dim)(x)
+    x = layers.Dense(rand_dim, activation='sigmoid')(x)
 
     return x

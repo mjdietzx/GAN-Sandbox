@@ -260,8 +260,6 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
                 # and plot randomly generated images
                 _g_z = generator_model.predict_on_batch(np.random.normal(size=(batch_size, rand_dim)))
 
-                # save one generated image to disc
-                Image.fromarray(g_z[0], mode='RGB').save(os.path.join(cache_dir, 'generated_image_step_{}.png').format(i))
                 # save a batch of generated and real images to disc
                 plot_image_batch_w_labels.plot_batch(np.concatenate((x, g_z, _g_z)), os.path.join(cache_dir, figure_name))
 
