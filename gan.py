@@ -62,7 +62,6 @@ critic_pre_train_steps = 100  # number of steps to pre-train the critic before s
 #
 
 log_interval = 100  # interval (in steps) at which to log loss summaries and save plots of image samples to disc
-fixed_noise = np.random.normal(size=(batch_size, rand_dim))  # fixed noise to generate batches of generated images
 
 
 def adversarial_training(data_dir, generator_model_path, discriminator_model_path, encoder_model_path):
@@ -252,8 +251,11 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
                 figure_name = 'generated_image_batch_step_{}.png'.format(i)
                 print('Saving batch of generated images at adversarial step: {}.'.format(i))
 
-                g_z = generator_model.predict(fixed_noise)
                 x = get_image_batch()
+
+                # plot the 'corresponding' generated images
+                z = encoder_model.predict_on_batch(x)
+                g_z = generator_model.predict_on_batch(z)
 
                 # save one generated image to disc
                 Image.fromarray(g_z[0], mode='RGB').save(os.path.join(cache_dir, 'generated_image_step_{}.png').format(i))
