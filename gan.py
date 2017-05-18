@@ -65,7 +65,7 @@ log_interval = 100  # interval (in steps) at which to log loss summaries and sav
 fixed_noise = np.random.normal(size=(batch_size, rand_dim))  # fixed noise to generate batches of generated images
 
 
-def adversarial_training(data_dir, generator_model_path, discriminator_model_path):
+def adversarial_training(data_dir, generator_model_path, discriminator_model_path, evaluate=False):
     """
     Adversarial training of the generator network Gθ and discriminator network Dφ.
 
@@ -204,6 +204,17 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
 
         print('Last batch of critic pre-training disc_loss: {}.'.format(loss))
         discriminator_model.save(os.path.join(cache_dir, 'discriminator_model_pre_trained.h5'))
+
+    if evaluate:
+        p = np.linspace(0.0, 1.0, num=batch_size)
+        base_noise = np.random.normal(size=(batch_size, rand_dim))
+
+        for i in range(rand_dim):
+            noise = base_noise.copy()
+            noise[:, i] = p
+
+            g_z = generator_model.predict(noise)
+            plot_image_batch_w_labels.plot_batch(g_z, os.path.join(cache_dir, 'evaluate_{}.png'.format(i)))
 
     for i in range(nb_steps):
         # hacky but tensorflow/CUDA failing sporadically...
