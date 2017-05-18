@@ -125,8 +125,7 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
     x_hat = epsilon * real_images + (1.0 - epsilon) * generated_images
 
     # calculate `z_hat`
-    _epsilon = tf.placeholder(tf.float32, shape=(batch_size, rand_dim))
-    z_hat = _epsilon * latent_noise + (1.0 - _epsilon) * encoded_latent_noise
+    z_hat = encoder_model(x_hat)
 
     # gradient penalty
     gradients = tf.gradients(discriminator_model(inputs=[x_hat, z_hat]), [x_hat, z_hat])
@@ -202,7 +201,6 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             latent_noise: np.random.normal(loc=0.0, scale=1.0, size=(batch_size, rand_dim)),
             real_images: get_image_batch(),
             epsilon: np.random.uniform(low=0.0, high=1.0, size=(batch_size, 1, 1, 1)),
-            _epsilon: np.random.uniform(low=0.0, high=1.0, size=(batch_size, rand_dim))
         })
 
         return d_l
@@ -238,7 +236,8 @@ def adversarial_training(data_dir, generator_model_path, discriminator_model_pat
             for _ in range(k_g):
                 x = get_image_batch()
 
-                loss_e = combined_model_e.train_on_batch(x, [-np.ones(batch_size)])
+                # TODO: correct sign?
+                loss_e = combined_model_e.train_on_batch(x, [np.ones(batch_size)])
                 combined_loss.append(loss_e)
 
                 z = np.random.normal(loc=0.0, scale=1.0, size=(batch_size, rand_dim))

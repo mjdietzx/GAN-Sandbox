@@ -142,6 +142,9 @@ def discriminator_network(x, z):
     x = layers.GlobalAveragePooling2D()(x)
 
     # latent space
+    z = layers.Dense(1024)(z)
+    z = add_common_layers(z)
+
     z = layers.Dense(512)(z)
     z = add_common_layers(z)
 
